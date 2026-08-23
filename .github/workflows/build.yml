@@ -8,22 +8,27 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
+      - name: Install System Dependencies
         run: |
           sudo apt update
           sudo apt install -y git zip unzip openjdk-17-jdk python3-pip autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libsqlite3-dev cmake libffi-dev libssl-dev m4 build-essential
+
+      - name: Install Python Tools
+        run: |
           pip install --upgrade "pip<24.0" "setuptools<69" "cython<3.0" buildozer
           python3 -m pip install "cython<3.0" --force-reinstall
 
-      - name: Build with Buildozer
+      - name: Build APK with Buildozer
         run: |
           buildozer init
           sed -i 's/^#* *warn_on_root = .*/warn_on_root = 0/' buildozer.spec
@@ -36,4 +41,4 @@ jobs:
         with:
           name: app-release
           path: bin/*.apk
-
+          
