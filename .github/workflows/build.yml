@@ -25,8 +25,8 @@ jobs:
 
       - name: Install Python Tools
         run: |
-          pip install --upgrade "pip<24.0" "setuptools<69" "cython<3.0" buildozer
-          python3 -m pip install "cython<3.0" --force-reinstall
+          python3 -m pip install --upgrade pip setuptools
+          pip install "cython<3.0" buildozer
 
       - name: Build APK with Buildozer
         run: |
