@@ -8,7 +8,7 @@ from kivy.uix.label import Label
 from kivy.clock import Clock
 from plyer import tts, call, flash
 
-# Android Native Intents for Opening Apps
+# Android Native Intents for Opening Apps & Contacts
 try:
     from jnius import autoclass
     PythonActivity = autoclass('org.kivy.android.PythonActivity')
@@ -230,4 +230,4 @@ class JarvisApp(App):
 
 if __name__ == '__main__':
     JarvisApp().run()
-                
+                    
