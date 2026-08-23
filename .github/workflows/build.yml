@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout code
@@ -30,10 +30,6 @@ jobs:
 
       - name: Build APK with Buildozer
         run: |
-          buildozer init
-          sed -i 's/^#* *warn_on_root = .*/warn_on_root = 0/' buildozer.spec
-          sed -i 's/^warn_on_root = .*/warn_on_root = 0/' buildozer.spec
-          sed -i 's/^#android.api = .*/android.api = 33/' buildozer.spec
           yes y | buildozer -v android debug
 
       - name: Upload APK
