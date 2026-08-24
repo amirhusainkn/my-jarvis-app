@@ -8,14 +8,15 @@ from kivy.uix.label import Label
 from kivy.clock import Clock
 from plyer import tts, call, flash
 
-# Android Native Intents for Opening Apps & Contacts
+# Android Native Intents
 try:
     from jnius import autoclass
     PythonActivity = autoclass('org.kivy.android.PythonActivity')
     Intent = autoclass('android.content.Intent')
     ContactsContract = autoclass('android.provider.ContactsContract')
     ANDROID_ENV = True
-except Exception:
+except Exception as e:
+    print("Jnius Import Error:", e)
     ANDROID_ENV = False
 
 
@@ -27,7 +28,7 @@ class JarvisUI(BoxLayout):
         self.spacing = 20
 
         self.status_label = Label(
-            text="Jarvis Background Mein Active Hai...",
+            text="Jarvis Active Hai...",
             font_size='20sp',
             halign='center',
             valign='middle'
@@ -48,13 +49,12 @@ class JarvisUI(BoxLayout):
             print("TTS Error:", e)
 
     def welcome_speech(self, dt):
-        self.speak("Aadaab... Main background mein haazir hoon. 'Jarvis' keh kar hukum kijiye.")
+        self.speak("Aadaab... Main haazir hoon. 'Jarvis' keh kar hukum kijiye.")
 
     def update_status(self, text):
         self.status_label.text = text
 
     def open_app(self, package_name, app_name):
-        """Android app ko package name se open karne ka logic"""
         if ANDROID_ENV:
             try:
                 activity = PythonActivity.mActivity
@@ -64,12 +64,12 @@ class JarvisUI(BoxLayout):
                     activity.startActivity(intent)
                     self.speak(f"Ji Sir, {app_name} khol raha hoon.")
                 else:
-                    self.speak(f"Sir, {app_name} aapke phone mein nahi mila.")
+                    self.speak(f"Sir, {app_name} nahi mila.")
             except Exception as e:
                 print("App Launch Error:", e)
-                self.speak(f"Maaf kijiye Sir, {app_name} kholne mein masla aaya.")
+                self.speak(f"Sir, {app_name} kholne mein masla aaya.")
         else:
-            self.speak(f"Sir, desktop environment par {app_name} nahi khul sakta.")
+            self.speak(f"Sir, {app_name} nahi khul sakta.")
 
     def get_contact_number(self, name_to_find):
         if not ANDROID_ENV:
@@ -116,27 +116,30 @@ class JarvisUI(BoxLayout):
 
     def listen_for_wakeword(self):
         recognizer = sr.Recognizer()
-        with sr.Microphone() as source:
-            recognizer.adjust_for_ambient_noise(source, duration=1)
-            while self.is_listening:
-                try:
-                    Clock.schedule_once(lambda dt: self.update_status("Listening for 'Jarvis'..."))
-                    audio = recognizer.listen(source, phrase_time_limit=4)
-
+        try:
+            with sr.Microphone() as source:
+                recognizer.adjust_for_ambient_noise(source, duration=1)
+                while self.is_listening:
                     try:
-                        command = recognizer.recognize_google(audio).lower()
-                    except sr.RequestError:
-                        command = ""
+                        Clock.schedule_once(lambda dt: self.update_status("Listening for 'Jarvis'..."))
+                        audio = recognizer.listen(source, phrase_time_limit=4)
 
-                    if "jarvis" in command:
-                        Clock.schedule_once(lambda dt: self.update_status("Jarvis Active Ho Gaya!"))
-                        self.speak("Ji Sir... Main sun raha hoon.")
-                        self.listen_for_command(recognizer, source)
+                        try:
+                            command = recognizer.recognize_google(audio).lower()
+                        except sr.RequestError:
+                            command = ""
 
-                except sr.UnknownValueError:
-                    pass
-                except Exception as e:
-                    print("Listening Error:", e)
+                        if "jarvis" in command:
+                            Clock.schedule_once(lambda dt: self.update_status("Jarvis Active Ho Gaya!"))
+                            self.speak("Ji Sir... Main sun raha hoon.")
+                            self.listen_for_command(recognizer, source)
+
+                    except sr.UnknownValueError:
+                        pass
+                    except Exception as e:
+                        print("Listening Loop Error:", e)
+        except Exception as main_mic_err:
+            print("Mic Error:", main_mic_err)
 
     def listen_for_command(self, recognizer, source):
         now = datetime.now()
@@ -151,7 +154,7 @@ class JarvisUI(BoxLayout):
             except sr.RequestError:
                 user_command = "offline_mode"
 
-            # 1. Torch / Flashlight Control
+            # 1. Torch Control
             if "torch" in user_command or "light" in user_command or "ujala" in user_command or "andhera" in user_command:
                 if "off" in user_command or "band" in user_command or "bujha" in user_command:
                     try:
@@ -166,7 +169,7 @@ class JarvisUI(BoxLayout):
                     except Exception:
                         self.speak("Torch on karne mein masla aaya.")
 
-            # 2. Open Apps (YouTube, WhatsApp, Settings)
+            # 2. Open Apps
             elif "youtube" in user_command:
                 self.open_app("com.google.android.youtube", "YouTube")
 
@@ -176,14 +179,13 @@ class JarvisUI(BoxLayout):
             elif "setting" in user_command or "settings" in user_command:
                 self.open_app("com.android.settings", "Settings")
 
-            # 3. Call Making & Contact Search
+            # 3. Call Making
             elif "call" in user_command or "कॉल" in user_command or "phone" in user_command:
                 raw_name = user_command.replace("jarvis", "").replace("call", "").replace("कॉल", "").replace("zara", "").replace("laga", "").replace("dijiye", "").replace("karo", "").replace("ko", "").strip()
                 
                 if raw_name:
                     phone_num, matched_name = self.get_contact_number(raw_name)
-                    response_text = f"Yes sir, {raw_name.capitalize()} ko call lagaya ja raha hai."
-                    self.speak(response_text)
+                    self.speak(f"Yes sir, {raw_name.capitalize()} ko call lagaya ja raha hai.")
                     
                     if phone_num:
                         try:
@@ -191,36 +193,36 @@ class JarvisUI(BoxLayout):
                         except Exception as e:
                             print("Call Error:", e)
                     else:
-                        Clock.schedule_once(lambda dt: self.speak(f"Maaf kijiye Sir, contacts mein {raw_name} ka number nahi mila."))
+                        Clock.schedule_once(lambda dt: self.speak(f"Contacts mein {raw_name} ka number nahi mila."))
                 else:
                     self.speak("Kisko call lagana hai Sir, naam batayein?")
 
-            # 4. Time / Waqt
+            # 4. Time
             elif "time" in user_command or "waqt" in user_command or "samay" in user_command:
                 current_time = now.strftime("%I:%M %p")
                 self.speak(f"Sir, abhi time {current_time} hua hai.")
 
-            # 5. Din (Day)
+            # 5. Day
             elif "din" in user_command or "day" in user_command:
                 current_day = now.strftime("%A")
                 self.speak(f"Sir, aaj {current_day} hai.")
 
-            # 6. Tareekh (Date)
+            # 6. Date
             elif "date" in user_command or "tareekh" in user_command:
                 current_date = now.strftime("%d %B %Y")
                 self.speak(f"Sir, aaj ki tareekh {current_date} hai.")
 
-            # 7. Offline Mode
+            # 7. Offline
             elif user_command == "offline_mode":
-                self.speak("Sir, internet offline hai, lekin main basic commands ke liye ready hoon.")
+                self.speak("Sir, internet offline hai.")
 
             else:
                 self.speak("Ji Sir, main samajh gaya.")
 
         except sr.UnknownValueError:
-            self.speak("Maaf kijiye Sir, main aapki baat samajh nahi paya.")
+            self.speak("Maaf kijiye Sir, samajh nahi paya.")
         except Exception as e:
-            print("Command Processing Error:", e)
+            print("Command Error:", e)
 
 
 class JarvisApp(App):
@@ -230,4 +232,3 @@ class JarvisApp(App):
 
 if __name__ == '__main__':
     JarvisApp().run()
-                    
