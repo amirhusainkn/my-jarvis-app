@@ -1,14 +1,24 @@
 import os
 import threading
 from datetime import datetime
-import speech_recognition as sr
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.clock import Clock
-from plyer import tts, call, flash
 
-# Android Native Intents
+# Pygame aur Plymouth crash errors ko bypass karne ke liye safe imports
+try:
+    from plyer import tts, call, flash
+except Exception as e:
+    tts = None
+    call = None
+    flash = None
+
+try:
+    import speech_recognition as sr
+except Exception as e:
+    sr = None
+
 try:
     from jnius import autoclass
     PythonActivity = autoclass('org.kivy.android.PythonActivity')
@@ -16,7 +26,6 @@ try:
     ContactsContract = autoclass('android.provider.ContactsContract')
     ANDROID_ENV = True
 except Exception as e:
-    print("Jnius Import Error:", e)
     ANDROID_ENV = False
 
 
@@ -28,28 +37,33 @@ class JarvisUI(BoxLayout):
         self.spacing = 20
 
         self.status_label = Label(
-            text="Jarvis Active Hai...",
-            font_size='20sp',
+            text="Jarvis Ready Hai...\nMicrophone Permission Allow Karein",
+            font_size='18sp',
             halign='center',
             valign='middle'
         )
         self.add_widget(self.status_label)
 
-        Clock.schedule_once(self.welcome_speech, 1)
-
-        self.is_listening = True
-        self.listener_thread = threading.Thread(target=self.listen_for_wakeword)
-        self.listener_thread.daemon = True
-        self.listener_thread.start()
+        # App startup timing
+        Clock.schedule_once(self.welcome_speech, 2)
 
     def speak(self, text):
-        try:
-            tts.speak(text)
-        except Exception as e:
-            print("TTS Error:", e)
+        print(f"Jarvis Speaking: {text}")
+        if tts:
+            try:
+                tts.speak(text)
+            except Exception as e:
+                print("TTS Error:", e)
 
     def welcome_speech(self, dt):
-        self.speak("Aadaab... Main haazir hoon. 'Jarvis' keh kar hukum kijiye.")
+        self.speak("Aadaab Aamir Bhai, main haazir hoon.")
+        self.update_status("Jarvis Active Hai!\n'Jarvis' bolkar hukum kijiye.")
+        
+        # Audio thread start
+        if sr:
+            listener_thread = threading.Thread(target=self.listen_for_wakeword)
+            listener_thread.daemon = True
+            listener_thread.start()
 
     def update_status(self, text):
         self.status_label.text = text
@@ -66,163 +80,64 @@ class JarvisUI(BoxLayout):
                 else:
                     self.speak(f"Sir, {app_name} nahi mila.")
             except Exception as e:
-                print("App Launch Error:", e)
-                self.speak(f"Sir, {app_name} kholne mein masla aaya.")
+                self.speak("App kholne mein masla aaya.")
         else:
-            self.speak(f"Sir, {app_name} nahi khul sakta.")
-
-    def get_contact_number(self, name_to_find):
-        if not ANDROID_ENV:
-            return None, name_to_find
-
-        try:
-            activity = PythonActivity.mActivity
-            resolver = activity.getContentResolver()
-            uri = ContactsContract.Contacts.CONTENT_URI
-            
-            cursor = resolver.query(uri, None, None, None, None)
-            if cursor is not None and cursor.getCount() > 0:
-                while cursor.moveToNext():
-                    id_idx = cursor.getColumnIndex(ContactsContract.Contacts._ID)
-                    name_idx = cursor.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME)
-                    has_phone_idx = cursor.getColumnIndex(ContactsContract.Contacts.HAS_PHONE_NUMBER)
-
-                    contact_id = cursor.getString(id_idx)
-                    contact_name = cursor.getString(name_idx)
-                    has_phone = cursor.getInt(has_phone_idx)
-
-                    if has_phone > 0 and name_to_find.lower() in contact_name.lower():
-                        phone_uri = ContactsContract.CommonDataKinds.Phone.CONTENT_URI
-                        p_cursor = resolver.query(
-                            phone_uri,
-                            None,
-                            ContactsContract.CommonDataKinds.Phone.CONTACT_ID + " = ?",
-                            [contact_id],
-                            None
-                        )
-                        if p_cursor is not None and p_cursor.moveToNext():
-                            num_idx = p_cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                            phone_number = p_cursor.getString(num_idx)
-                            p_cursor.close()
-                            cursor.close()
-                            return phone_number, contact_name
-                        if p_cursor is not None:
-                            p_cursor.close()
-                cursor.close()
-        except Exception as e:
-            print("Contact Search Error:", e)
-
-        return None, name_to_find
+            self.speak(f"Sir, {app_name} mobile par hi khulega.")
 
     def listen_for_wakeword(self):
+        if not sr:
+            return
         recognizer = sr.Recognizer()
         try:
             with sr.Microphone() as source:
                 recognizer.adjust_for_ambient_noise(source, duration=1)
-                while self.is_listening:
+                while True:
                     try:
-                        Clock.schedule_once(lambda dt: self.update_status("Listening for 'Jarvis'..."))
                         audio = recognizer.listen(source, phrase_time_limit=4)
-
-                        try:
-                            command = recognizer.recognize_google(audio).lower()
-                        except sr.RequestError:
-                            command = ""
-
+                        command = recognizer.recognize_google(audio).lower()
                         if "jarvis" in command:
-                            Clock.schedule_once(lambda dt: self.update_status("Jarvis Active Ho Gaya!"))
-                            self.speak("Ji Sir... Main sun raha hoon.")
-                            self.listen_for_command(recognizer, source)
-
-                    except sr.UnknownValueError:
+                            self.speak("Ji Sir...")
+                            self.process_command(recognizer, source)
+                    except Exception:
                         pass
-                    except Exception as e:
-                        print("Listening Loop Error:", e)
-        except Exception as main_mic_err:
-            print("Mic Error:", main_mic_err)
+        except Exception as err:
+            print("Mic Error:", err)
 
-    def listen_for_command(self, recognizer, source):
+    def process_command(self, recognizer, source):
         now = datetime.now()
-
         try:
-            Clock.schedule_once(lambda dt: self.update_status("Aapka hukum sun raha hoon..."))
             audio = recognizer.listen(source, phrase_time_limit=5)
+            user_command = recognizer.recognize_google(audio).lower()
+            
+            Clock.schedule_once(lambda dt: self.update_status(f"Aapne kaha: {user_command}"))
 
-            try:
-                user_command = recognizer.recognize_google(audio).lower()
-                Clock.schedule_once(lambda dt: self.update_status(f"Aapne kaha: {user_command}"))
-            except sr.RequestError:
-                user_command = "offline_mode"
+            if "time" in user_command or "waqt" in user_command or "samay" in user_command:
+                current_time = now.strftime("%I:%M %p")
+                self.speak(f"Sir, abhi time {current_time} hua hai.")
 
-            # 1. Torch Control
-            if "torch" in user_command or "light" in user_command or "ujala" in user_command or "andhera" in user_command:
-                if "off" in user_command or "band" in user_command or "bujha" in user_command:
-                    try:
-                        flash.off()
-                        self.speak("Ji Sir, torch band kar di hai.")
-                    except Exception:
-                        self.speak("Torch off karne mein masla aaya.")
-                else:
-                    try:
-                        flash.on()
-                        self.speak("Ji Sir, torch jala di hai.")
-                    except Exception:
-                        self.speak("Torch on karne mein masla aaya.")
+            elif "date" in user_command or "tareekh" in user_command:
+                current_date = now.strftime("%d %B %Y")
+                self.speak(f"Sir, aaj ki tareekh {current_date} hai.")
 
-            # 2. Open Apps
             elif "youtube" in user_command:
                 self.open_app("com.google.android.youtube", "YouTube")
 
             elif "whatsapp" in user_command:
                 self.open_app("com.whatsapp", "WhatsApp")
 
-            elif "setting" in user_command or "settings" in user_command:
-                self.open_app("com.android.settings", "Settings")
-
-            # 3. Call Making
-            elif "call" in user_command or "कॉल" in user_command or "phone" in user_command:
-                raw_name = user_command.replace("jarvis", "").replace("call", "").replace("कॉल", "").replace("zara", "").replace("laga", "").replace("dijiye", "").replace("karo", "").replace("ko", "").strip()
-                
-                if raw_name:
-                    phone_num, matched_name = self.get_contact_number(raw_name)
-                    self.speak(f"Yes sir, {raw_name.capitalize()} ko call lagaya ja raha hai.")
-                    
-                    if phone_num:
-                        try:
-                            call.makecall(tel=phone_num)
-                        except Exception as e:
-                            print("Call Error:", e)
-                    else:
-                        Clock.schedule_once(lambda dt: self.speak(f"Contacts mein {raw_name} ka number nahi mila."))
-                else:
-                    self.speak("Kisko call lagana hai Sir, naam batayein?")
-
-            # 4. Time
-            elif "time" in user_command or "waqt" in user_command or "samay" in user_command:
-                current_time = now.strftime("%I:%M %p")
-                self.speak(f"Sir, abhi time {current_time} hua hai.")
-
-            # 5. Day
-            elif "din" in user_command or "day" in user_command:
-                current_day = now.strftime("%A")
-                self.speak(f"Sir, aaj {current_day} hai.")
-
-            # 6. Date
-            elif "date" in user_command or "tareekh" in user_command:
-                current_date = now.strftime("%d %B %Y")
-                self.speak(f"Sir, aaj ki tareekh {current_date} hai.")
-
-            # 7. Offline
-            elif user_command == "offline_mode":
-                self.speak("Sir, internet offline hai.")
+            elif "torch" in user_command or "light" in user_command:
+                if flash:
+                    try:
+                        flash.on()
+                        self.speak("Torch jala di hai.")
+                    except Exception:
+                        self.speak("Torch feature support nahi kar raha.")
 
             else:
-                self.speak("Ji Sir, main samajh gaya.")
+                self.speak("Ji Aamir bhai, main samajh gaya.")
 
-        except sr.UnknownValueError:
-            self.speak("Maaf kijiye Sir, samajh nahi paya.")
-        except Exception as e:
-            print("Command Error:", e)
+        except Exception:
+            self.speak("Aapki awaaz saaf nahi aayi.")
 
 
 class JarvisApp(App):
@@ -232,3 +147,4 @@ class JarvisApp(App):
 
 if __name__ == '__main__':
     JarvisApp().run()
+    
