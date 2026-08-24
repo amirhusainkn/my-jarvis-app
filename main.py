@@ -1,79 +1,85 @@
-import threading
 from datetime import datetime
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
+from kivy.uix.button import Button
 from kivy.clock import Clock
 from kivy.graphics import Color, Rectangle
 
-# Android Native Imports
+# Plyer TTS (Bolne ke liye)
 try:
-    from jnius import autoclass
-    from android.permissions import request_permissions, Permission
-    
-    PythonActivity = autoclass('org.kivy.android.PythonActivity')
-    Intent = autoclass('android.content.Intent')
-    RecognizerIntent = autoclass('android.speech.RecognizerIntent')
-    
-    ANDROID_ENV = True
-except Exception as e:
-    print("Android Imports Error:", e)
-    ANDROID_ENV = False
+    from plyer import tts
+except Exception:
+    tts = None
 
-
-class MicTestUI(BoxLayout):
+class JarvisUI(BoxLayout):
     def __init__(self, **kwargs):
-        super(MicTestUI, self).__init__(**kwargs)
+        super(JarvisUI, self).__init__(**kwargs)
         self.orientation = 'vertical'
-        self.padding = 20
+        self.padding = 30
         self.spacing = 20
 
+        # Background color set karna (Dark theme)
         with self.canvas.before:
             Color(0.05, 0.05, 0.08, 1)
             self.rect = Rectangle(size=self.size, pos=self.pos)
         self.bind(size=self._update_rect, pos=self._update_rect)
 
-        # Clean Screen (Sirf Sunne Ka Status)
+        # Status Label (Jo screen par dikhega)
         self.status_label = Label(
-            text="[color=00ff66][b]Listening...[/b][/color]",
+            text="[color=00ff66][b]Jarvis Tayar Hai...[/b][/color]",
             markup=True,
-            font_size='22sp',
+            font_size='24sp',
             halign='center',
             valign='middle'
         )
         self.add_widget(self.status_label)
 
-        if ANDROID_ENV:
-            try:
-                request_permissions([
-                    Permission.RECORD_AUDIO,
-                    Permission.READ_EXTERNAL_STORAGE,
-                    Permission.WRITE_EXTERNAL_STORAGE
-                ])
-            except Exception as e:
-                print("Permission Error:", e)
+        # Talk / Speak Button (Jab aap dabayein ya automatic chale)
+        self.speak_btn = Button(
+            text="Time, Date aur Din Suno",
+            font_size='18sp',
+            size_hint=(1, 0.3),
+            background_color=(0.1, 0.6, 0.3, 1)
+        )
+        self.speak_btn.bind(on_press=self.tell_time_date_day)
+        self.add_widget(self.speak_btn)
 
-        Clock.schedule_once(self.trigger_speech_intent, 1.5)
+        # App khulte hi 2 sekund baad automatic bolna shuru karega
+        Clock.schedule_once(self.tell_time_date_day, 2)
 
     def _update_rect(self, instance, value):
         self.rect.pos = instance.pos
         self.rect.size = instance.size
 
-    def trigger_speech_intent(self, dt):
-        try:
-            activity = PythonActivity.mActivity
-            intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
-            
-            activity.startActivity(intent)
-        except Exception as e:
-            print("Intent Error:", e)
+    def speak(self, text):
+        if tts:
+            try:
+                tts.speak(text)
+            except Exception as e:
+                print("TTS Error:", e)
+
+    def tell_time_date_day(self, dt):
+        now = datetime.now()
+        
+        # Time, Date aur Day nikalna
+        current_time = now.strftime("%I:%M %p")
+        current_date = now.strftime("%d %B %Y")
+        current_day = now.strftime("%A")
+        
+        # Assistant ka poora solid jawab
+        reply = f"Sir, abhi time {current_time} ho raha hai, aaj ki tarikh {current_date} hai, aur din {current_day} hai."
+        
+        # Screen par update karna
+        self.status_label.text = f"[color=00f0ff][b]Time: {current_time}\nDin: {current_day}\nTarikh: {current_date}[/b][/color]"
+        
+        # Bol kar batana
+        self.speak(reply)
 
 
 class TestApp(App):
     def build(self):
-        return MicTestUI()
+        return JarvisUI()
 
 
 if __name__ == '__main__':
