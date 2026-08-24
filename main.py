@@ -6,26 +6,26 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.clock import Clock
 
-# Pygame aur Plymouth crash errors ko bypass karne ke liye safe imports
+# Plyer Imports
 try:
     from plyer import tts, call, flash
-except Exception as e:
+except Exception:
     tts = None
     call = None
     flash = None
 
+# Speech Recognition Import
 try:
     import speech_recognition as sr
-except Exception as e:
+except Exception:
     sr = None
 
+# Android Native Permission & Intents
 try:
     from jnius import autoclass
-    PythonActivity = autoclass('org.kivy.android.PythonActivity')
-    Intent = autoclass('android.content.Intent')
-    ContactsContract = autoclass('android.provider.ContactsContract')
+    from android.permissions import request_permissions, Permission
     ANDROID_ENV = True
-except Exception as e:
+except Exception:
     ANDROID_ENV = False
 
 
@@ -37,14 +37,25 @@ class JarvisUI(BoxLayout):
         self.spacing = 20
 
         self.status_label = Label(
-            text="Jarvis Ready Hai...\nMicrophone Permission Allow Karein",
+            text="Jarvis Active Hai!\nMicrophone Permission Dein...",
             font_size='18sp',
             halign='center',
             valign='middle'
         )
         self.add_widget(self.status_label)
 
-        # App startup timing
+        # Android par Permissions Request Karein
+        if ANDROID_ENV:
+            try:
+                request_permissions([
+                    Permission.RECORD_AUDIO,
+                    Permission.READ_CONTACTS,
+                    Permission.CALL_PHONE,
+                    Permission.CAMERA
+                ])
+            except Exception as e:
+                print("Permission Request Error:", e)
+
         Clock.schedule_once(self.welcome_speech, 2)
 
     def speak(self, text):
@@ -56,10 +67,9 @@ class JarvisUI(BoxLayout):
                 print("TTS Error:", e)
 
     def welcome_speech(self, dt):
-        self.speak("Aadaab Aamir Bhai, main haazir hoon.")
+        self.speak("Aadaab Aamir Bhai, main haazir hoon. 'Jarvis' bolkar hukum kijiye.")
         self.update_status("Jarvis Active Hai!\n'Jarvis' bolkar hukum kijiye.")
         
-        # Audio thread start
         if sr:
             listener_thread = threading.Thread(target=self.listen_for_wakeword)
             listener_thread.daemon = True
@@ -71,6 +81,7 @@ class JarvisUI(BoxLayout):
     def open_app(self, package_name, app_name):
         if ANDROID_ENV:
             try:
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 activity = PythonActivity.mActivity
                 pm = activity.getPackageManager()
                 intent = pm.getLaunchIntentForPackage(package_name)
@@ -88,13 +99,22 @@ class JarvisUI(BoxLayout):
         if not sr:
             return
         recognizer = sr.Recognizer()
+        recognizer.dynamic_energy_threshold = True
+        
         try:
             with sr.Microphone() as source:
                 recognizer.adjust_for_ambient_noise(source, duration=1)
                 while True:
                     try:
+                        Clock.schedule_once(lambda dt: self.update_status("Suno... Main Sun Raha Hoon"))
                         audio = recognizer.listen(source, phrase_time_limit=4)
-                        command = recognizer.recognize_google(audio).lower()
+                        
+                        try:
+                            command = recognizer.recognize_google(audio).lower()
+                            Clock.schedule_once(lambda dt, c=command: self.update_status(f"Aapne Kaha: {c}"))
+                        except Exception:
+                            command = ""
+
                         if "jarvis" in command:
                             self.speak("Ji Sir...")
                             self.process_command(recognizer, source)
@@ -109,7 +129,7 @@ class JarvisUI(BoxLayout):
             audio = recognizer.listen(source, phrase_time_limit=5)
             user_command = recognizer.recognize_google(audio).lower()
             
-            Clock.schedule_once(lambda dt: self.update_status(f"Aapne kaha: {user_command}"))
+            Clock.schedule_once(lambda dt, c=user_command: self.update_status(f"Hukum: {c}"))
 
             if "time" in user_command or "waqt" in user_command or "samay" in user_command:
                 current_time = now.strftime("%I:%M %p")
@@ -131,7 +151,7 @@ class JarvisUI(BoxLayout):
                         flash.on()
                         self.speak("Torch jala di hai.")
                     except Exception:
-                        self.speak("Torch feature support nahi kar raha.")
+                        self.speak("Torch support nahi kar raha.")
 
             else:
                 self.speak("Ji Aamir bhai, main samajh gaya.")
