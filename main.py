@@ -6,21 +6,14 @@ from kivy.uix.label import Label
 from kivy.clock import Clock
 from kivy.graphics import Color, Rectangle
 
-# Plyer TTS
+# Android Native Imports
 try:
-    from plyer import tts
-except Exception:
-    tts = None
-
-# Android Native Speech Recognition Imports
-try:
-    from jnius import autoclass, PythonJavaClass, java_method
+    from jnius import autoclass
     from android.permissions import request_permissions, Permission
     
     PythonActivity = autoclass('org.kivy.android.PythonActivity')
     Intent = autoclass('android.content.Intent')
     RecognizerIntent = autoclass('android.speech.RecognizerIntent')
-    SpeechRecognizer = autoclass('android.speech.SpeechRecognizer')
     
     ANDROID_ENV = True
 except Exception as e:
@@ -40,8 +33,9 @@ class MicTestUI(BoxLayout):
             self.rect = Rectangle(size=self.size, pos=self.pos)
         self.bind(size=self._update_rect, pos=self._update_rect)
 
+        # Clean Screen (Sirf Sunne Ka Status)
         self.status_label = Label(
-            text="[color=00f0ff][b]INITIALIZING JARVIS...[/b][/color]",
+            text="[color=00ff66][b]Listening...[/b][/color]",
             markup=True,
             font_size='22sp',
             halign='center',
@@ -59,45 +53,22 @@ class MicTestUI(BoxLayout):
             except Exception as e:
                 print("Permission Error:", e)
 
-        Clock.schedule_once(self.start_app, 2)
+        Clock.schedule_once(self.trigger_speech_intent, 1.5)
 
     def _update_rect(self, instance, value):
         self.rect.pos = instance.pos
         self.rect.size = instance.size
 
-    def speak(self, text):
-        if tts:
-            try:
-                tts.speak(text)
-            except Exception as e:
-                print("TTS Error:", e)
-
-    def update_display(self, text):
-        self.status_label.text = text
-
-    def start_app(self, dt):
-        self.update_display("[color=00f0ff][b]SIR, JARVIS IS READY![/b][/color]\n\n[color=ffaa00]Listening active...[/color]")
-        self.speak("Sir, Jarvis is ready!")
-        
-        # Start Speech Recognition Loop
-        if ANDROID_ENV:
-            Clock.schedule_once(self.start_listening, 1)
-        else:
-            self.update_display("[color=ff0000][b]ERROR: Android Native Engine Not Available[/b][/color]")
-
-    def start_listening(self, dt):
+    def trigger_speech_intent(self, dt):
         try:
             activity = PythonActivity.mActivity
             intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
             
-            self.update_display("[color=00f0ff][b]SIR, JARVIS IS READY![/b][/color]\n\n[color=00ff66]Listening... (Aap Boliye)[/color]")
-            
-            # Start Activity for Result
-            activity.startActivityForResult(intent, 1001)
+            activity.startActivity(intent)
         except Exception as e:
-            print("Mic Start Error:", e)
+            print("Intent Error:", e)
 
 
 class TestApp(App):
