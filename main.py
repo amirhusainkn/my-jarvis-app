@@ -37,14 +37,14 @@ class JarvisUI(BoxLayout):
         self.spacing = 20
 
         self.status_label = Label(
-            text="Jarvis Active Hai!\nMicrophone Permission Dein...",
+            text="Jarvis Active Hai!\n'Jarvis' bolkar hukum kijiye.",
             font_size='18sp',
             halign='center',
             valign='middle'
         )
         self.add_widget(self.status_label)
 
-        # Android par Permissions Request Karein
+        # Android Native Permission Trigger
         if ANDROID_ENV:
             try:
                 request_permissions([
@@ -54,7 +54,7 @@ class JarvisUI(BoxLayout):
                     Permission.CAMERA
                 ])
             except Exception as e:
-                print("Permission Request Error:", e)
+                print("Permission Error:", e)
 
         Clock.schedule_once(self.welcome_speech, 2)
 
@@ -67,8 +67,8 @@ class JarvisUI(BoxLayout):
                 print("TTS Error:", e)
 
     def welcome_speech(self, dt):
-        self.speak("Aadaab Aamir Bhai, main haazir hoon. 'Jarvis' bolkar hukum kijiye.")
-        self.update_status("Jarvis Active Hai!\n'Jarvis' bolkar hukum kijiye.")
+        self.speak("Aadaab Aamir Bhai, main haazir hoon.")
+        self.update_status("Driving Mode Active\n'Jarvis' Boliye...")
         
         if sr:
             listener_thread = threading.Thread(target=self.listen_for_wakeword)
@@ -98,36 +98,40 @@ class JarvisUI(BoxLayout):
     def listen_for_wakeword(self):
         if not sr:
             return
-        recognizer = sr.Recognizer()
-        recognizer.dynamic_energy_threshold = True
         
-        try:
-            with sr.Microphone() as source:
-                recognizer.adjust_for_ambient_noise(source, duration=1)
-                while True:
-                    try:
-                        Clock.schedule_once(lambda dt: self.update_status("Suno... Main Sun Raha Hoon"))
-                        audio = recognizer.listen(source, phrase_time_limit=4)
-                        
-                        try:
-                            command = recognizer.recognize_google(audio).lower()
-                            Clock.schedule_once(lambda dt, c=command: self.update_status(f"Aapne Kaha: {c}"))
-                        except Exception:
-                            command = ""
+        recognizer = sr.Recognizer()
+        recognizer.dynamic_energy_threshold = False
+        recognizer.energy_threshold = 300 
 
-                        if "jarvis" in command:
-                            self.speak("Ji Sir...")
-                            self.process_command(recognizer, source)
-                    except Exception:
-                        pass
-        except Exception as err:
-            print("Mic Error:", err)
+        while True:
+            try:
+                with sr.Microphone() as source:
+                    recognizer.adjust_for_ambient_noise(source, duration=0.3)
+                    Clock.schedule_once(lambda dt: self.update_status("Suno... Driving Mode Active\n'Jarvis' Boliye"))
+                    
+                    audio = recognizer.listen(source, phrase_time_limit=3, timeout=None)
+
+                try:
+                    command = recognizer.recognize_google(audio, language="hi-IN").lower()
+                    Clock.schedule_once(lambda dt, c=command: self.update_status(f"Aapne Kaha: {c}"))
+                    
+                    if "jarvis" in command or "जार्विस" in command:
+                        self.speak("Ji Aamir bhai...")
+                        with sr.Microphone() as source2:
+                            self.process_command(recognizer, source2)
+                except sr.UnknownValueError:
+                    pass
+                except sr.RequestError:
+                    pass
+
+            except Exception as err:
+                print("Mic Loop Repair Error:", err)
 
     def process_command(self, recognizer, source):
         now = datetime.now()
         try:
             audio = recognizer.listen(source, phrase_time_limit=5)
-            user_command = recognizer.recognize_google(audio).lower()
+            user_command = recognizer.recognize_google(audio, language="hi-IN").lower()
             
             Clock.schedule_once(lambda dt, c=user_command: self.update_status(f"Hukum: {c}"))
 
@@ -167,4 +171,4 @@ class JarvisApp(App):
 
 if __name__ == '__main__':
     JarvisApp().run()
-    
+            
