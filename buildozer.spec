@@ -5,7 +5,7 @@ package.domain = org.test
 source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 version = 0.1
-requirements = python3,kivy,plyer,SpeechRecognition,pyjnius
+requirements = python3,kivy,plyer,speechrecognition,pyjnius
 
 orientation = portrait
 osx.python_version = 3
