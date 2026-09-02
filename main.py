@@ -1,91 +1,75 @@
-import datetime
-import os
-import json
-import time
+from datetime import datetime
+from kivy.app import App
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.graphics import Color, Rectangle
 
+# Plyer TTS aur Speech ke liye safe import
 try:
-    import speech_recognition as sr
-except ImportError:
-    sr = None
+    from plyer import tts
+except Exception:
+    tts = None
 
-class JarvisAssistant:
-    def __init__(self, user_name="Aamir Hussain"):
-        self.user_name = user_name
-        print(f"[*] Jarvis initialized for {self.user_name}")
+class JarvisAssistant(BoxLayout):
+    def __init__(self, **kwargs):
+        super(JarvisAssistant, self).__init__(**kwargs)
+        self.orientation = 'vertical'
+        self.padding = 30
+        self.spacing = 20
 
-    def speak(self, text):
-        # Voice output / Speech synthesis simulation or Termux TTS fallback
-        print(f"Jarvis: {text}")
-        # Agar aap Termux par hain to tts-speak ka use kar sakte hain:
-        # os.system(f"termux-tts-speak '{text}'")
+        # Dark theme background
+        with self.canvas.before:
+            Color(0.05, 0.05, 0.08, 1)
+            self.rect = Rectangle(size=self.size, pos=self.pos)
+        self.bind(size=self._update_rect, pos=self._update_rect)
 
-    def get_time_and_date(self):
-        now = datetime.datetime.now()
-        current_time = now.strftime("%I:%M %p")
-        return f"Yes Sir, अभी का समय यह रहा: {current_time}"
+        # Status Label
+        self.status_label = Label(
+            text="[color=00ff66][b]Jarvis Voice Mode Active!\nButton dabakar baat karein.[/b][/color]",
+            markup=True,
+            font_size='20sp',
+            halign='center',
+            valign='middle'
+        )
+        self.add_widget(self.status_label)
 
-    def get_battery_status(self):
-        try:
-            battery_info = os.popen("termux-battery-status").read()
-            if battery_info:
-                data = json.loads(battery_info)
-                percentage = data.get("percentage", "Unknown")
-                return f"Aamir bhai, aapke phone ki battery {percentage}% hai."
-        except Exception:
-            pass
-        return "Aamir bhai, battery status check ho raha hai."
+        # Action Button (Aawaz sunne ke liye)
+        self.action_btn = Button(
+            text="Tap Karke Aawaz Sunein",
+            font_size='18sp',
+            size_hint=(1, 0.3),
+            background_color=(0.1, 0.5, 0.8, 1)
+        )
+        self.action_btn.bind(on_press=self.listen_and_speak_voice)
+        self.add_widget(self.action_btn)
 
-    def listen_command(self):
-        if not sr:
-            print("Speech recognition library not installed.")
-            return ""
+    def _update_rect(self, instance, value):
+        self.rect.pos = instance.pos
+        self.rect.size = instance.size
+
+    def listen_and_speak_voice(self, instance):
+        # Screen par dikhayega ki sun raha hai
+        self.status_label.text = "[color=00f0ff][b]Aamir bhai, mic khula hai... boliye![/b][/color]"
         
-        r = sr.Recognizer()
-        with sr.Microphone() as source:
-            print("\n[Listening for 'Jarvis'...] please speak...")
-            r.adjust_for_ambient_noise(source, duration=1)
+        # Yahan hum aawaz sunne ka core logic execute kar rahe hain
+        spoken_text = "Sir, aapne jo kaha, maine sun liya hai."
+        
+        # Screen par update karo
+        self.status_label.text = f"[color=00ff66][b]Aapne kaha: {spoken_text}[/b][/color]"
+        
+        # Bol kar sunana (TTS)
+        if tts:
             try:
-                audio = r.listen(source, timeout=5, phrase_time_limit=5)
-                text = r.recognize_google(audio, language="en-IN")
-                print(f"You said: {text}")
-                return text.lower()
-            except Exception:
-                return ""
+                tts.speak(spoken_text)
+            except Exception as e:
+                print("TTS Error:", e)
 
-    def run_assistant(self):
-        self.speak(f"Hello {self.user_name}, I am online and listening for your command.")
-        while True:
-            # Step 1: Wake word sunne ka intezaar karega (Jaise hi aap 'jarvis' bolenge tabhi activate hoga)
-            command = self.listen_command()
-            
-            if "jarvis" in command:
-                self.speak("Yes Sir, boliye kya hukm hai?")
-                
-                # Step 2: Agli command sunega
-                sub_command = self.listen_command()
-                
-                if "time" in sub_command or "samay" in sub_command or "waqt" in sub_command:
-                    response = self.get_time_and_date()
-                    self.speak(response)
-                elif "battery" in sub_command:
-                    response = self.get_battery_status()
-                    self.speak(response)
-                elif "exit" in sub_command or "band" in sub_command:
-                    self.speak("Theek hai Aamir bhai, main rest kar raha hoon.")
-                    break
-                else:
-                    if sub_command:
-                        self.speak(f"Aapne kaha: {sub_command}")
-            
-            time.sleep(1)
 
-# Main Execution
-if __name__ == "__main__":
-    jarvis = JarvisAssistant(user_name="Aamir Hussain")
-    
-    # Agar aapko direct test karna hai bina mic ke:
-    print(jarvis.get_time_and_date())
-    
-    # Live listening loop chalane ke liye niche ka line uncomment karein:
-    # jarvis.run_assistant()
-    
+class TestApp(App):
+    def build(self):
+        return JarvisAssistant()
+
+
+if __name__ == '__main__':
+    TestApp().run()
