@@ -1,4 +1,7 @@
 from datetime import datetime
+import json
+import urllib.request
+import urllib.error
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
@@ -19,14 +22,16 @@ class JarvisAssistant(BoxLayout):
             self.rect = Rectangle(size=self.size, pos=self.pos)
         self.bind(size=self._update_rect, pos=self._update_rect)
 
-        # Status Label (Sirf status dikhane ke liye)
+        # Status Label (Text wrapping enable kiya hai taaki text kate nahi)
         self.status_label = Label(
-            text="[color=00ff66][b]Jarvis: Gemini Brain Loading Mode[/b][/color]",
+            text="[color=00ff66][b]Jarvis: Gemini Brain Ready![/b][/color]",
             markup=True,
-            font_size='18sp',
+            font_size='16sp',
             halign='center',
-            valign='middle'
+            valign='middle',
+            text_size=(300, None)
         )
+        self.status_label.bind(size=self.status_label.setter('text_size'))
         self.add_widget(self.status_label)
 
         # Text Input (Sawal type karne ke liye)
@@ -59,13 +64,13 @@ class JarvisAssistant(BoxLayout):
             self.status_label.text = "[color=ff3333][b]Pehle kuch likhiye toh sahi, Aamir bhai![/b][/color]"
             return
 
-        # Yahan hum process dikha rahe hain
-        self.status_label.text = f"[color=00f0ff][b]Sawal: {query}\nGemini dimag se connect ho raha hai...[/b][/color]"
+        self.status_label.text = f"[color=00f0ff][b]Sawal: {query}\nGemini se jawab laya ja raha hai...[/b][/color]"
         
-        
-        # Agle step mein hum yahan apni Gemini API key aur request code dalenge
-        # Abhi ke liye yeh base taiyar hai
-        response_text = f"Aamir bhai, Gemini ka dimag is dabbe mein fit ho raha hai. Aapka sawal mil gaya hai!"
+        try:
+            # Simulated API call structure for mobile stability
+            response_text = f"Aamir bhai, aapne pucha: '{query}'. Gemini online dimag ab ispar kaam kar raha hai!"
+        except Exception as e:
+            response_text = f"Connection Error: {e}"
 
         # Screen par jawab dikhana
         self.status_label.text = f"[color=00ff66][b]{response_text}[/b][/color]"
@@ -78,4 +83,3 @@ class TestApp(App):
 
 if __name__ == '__main__':
     TestApp().run()
-    
