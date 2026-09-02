@@ -3,13 +3,8 @@ from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
 from kivy.graphics import Color, Rectangle
-
-# Plyer TTS aur Speech ke liye safe import
-try:
-    from plyer import tts
-except Exception:
-    tts = None
 
 class JarvisAssistant(BoxLayout):
     def __init__(self, **kwargs):
@@ -24,46 +19,56 @@ class JarvisAssistant(BoxLayout):
             self.rect = Rectangle(size=self.size, pos=self.pos)
         self.bind(size=self._update_rect, pos=self._update_rect)
 
-        # Status Label
+        # Status Label (Sirf status dikhane ke liye)
         self.status_label = Label(
-            text="[color=00ff66][b]Jarvis Voice Mode Active!\nButton dabakar baat karein.[/b][/color]",
+            text="[color=00ff66][b]Jarvis: Gemini Brain Loading Mode[/b][/color]",
             markup=True,
-            font_size='20sp',
+            font_size='18sp',
             halign='center',
             valign='middle'
         )
         self.add_widget(self.status_label)
 
-        # Action Button (Aawaz sunne ke liye)
+        # Text Input (Sawal type karne ke liye)
+        self.user_input = TextInput(
+            text='',
+            hint_text='Aamir bhai, yahan apna sawal likhiye...',
+            size_hint=(1, 0.25),
+            font_size='16sp',
+            multiline=False
+        )
+        self.add_widget(self.user_input)
+
+        # Action Button
         self.action_btn = Button(
-            text="Tap Karke Aawaz Sunein",
+            text="Gemini se Poochhein",
             font_size='18sp',
-            size_hint=(1, 0.3),
+            size_hint=(1, 0.25),
             background_color=(0.1, 0.5, 0.8, 1)
         )
-        self.action_btn.bind(on_press=self.listen_and_speak_voice)
+        self.action_btn.bind(on_press=self.ask_gemini_brain)
         self.add_widget(self.action_btn)
 
     def _update_rect(self, instance, value):
         self.rect.pos = instance.pos
         self.rect.size = instance.size
 
-    def listen_and_speak_voice(self, instance):
-        # Screen par dikhayega ki sun raha hai
-        self.status_label.text = "[color=00f0ff][b]Aamir bhai, mic khula hai... boliye![/b][/color]"
+    def ask_gemini_brain(self, instance):
+        query = self.user_input.text.strip()
+        if not query:
+            self.status_label.text = "[color=ff3333][b]Pehle kuch likhiye toh sahi, Aamir bhai![/b][/color]"
+            return
+
+        # Yahan hum process dikha rahe hain
+        self.status_label.text = f"[color=00f0ff][b]Sawal: {query}\nGemini dimag se connect ho raha hai...[/b][/color]"
         
-        # Yahan hum aawaz sunne ka core logic execute kar rahe hain
-        spoken_text = "Sir, aapne jo kaha, maine sun liya hai."
         
-        # Screen par update karo
-        self.status_label.text = f"[color=00ff66][b]Aapne kaha: {spoken_text}[/b][/color]"
-        
-        # Bol kar sunana (TTS)
-        if tts:
-            try:
-                tts.speak(spoken_text)
-            except Exception as e:
-                print("TTS Error:", e)
+        # Agle step mein hum yahan apni Gemini API key aur request code dalenge
+        # Abhi ke liye yeh base taiyar hai
+        response_text = f"Aamir bhai, Gemini ka dimag is dabbe mein fit ho raha hai. Aapka sawal mil gaya hai!"
+
+        # Screen par jawab dikhana
+        self.status_label.text = f"[color=00ff66][b]{response_text}[/b][/color]"
 
 
 class TestApp(App):
@@ -73,3 +78,4 @@ class TestApp(App):
 
 if __name__ == '__main__':
     TestApp().run()
+    
