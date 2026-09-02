@@ -22,9 +22,9 @@ class JarvisAssistant(BoxLayout):
             self.rect = Rectangle(size=self.size, pos=self.pos)
         self.bind(size=self._update_rect, pos=self._update_rect)
 
-        # Status Label (Text wrapping enable kiya hai taaki text kate nahi)
+        # Status Label
         self.status_label = Label(
-            text="[color=00ff66][b]Jarvis: Gemini Brain Ready![/b][/color]",
+            text="[color=00ff66][b]Jarvis: Gemini Brain Connected![/b][/color]",
             markup=True,
             font_size='16sp',
             halign='center',
@@ -64,16 +64,37 @@ class JarvisAssistant(BoxLayout):
             self.status_label.text = "[color=ff3333][b]Pehle kuch likhiye toh sahi, Aamir bhai![/b][/color]"
             return
 
-        self.status_label.text = f"[color=00f0ff][b]Sawal: {query}\nGemini se jawab laya ja raha hai...[/b][/color]"
+        self.status_label.text = f"[color=00f0ff][b]Sawal: {query}\nGemini se baat ho rahi hai...[/b][/color]"
         
-        try:
-            # Simulated API call structure for mobile stability
-            response_text = f"Aamir bhai, aapne pucha: '{query}'. Gemini online dimag ab ispar kaam kar raha hai!"
-        except Exception as e:
-            response_text = f"Connection Error: {e}"
+        # Yahan apni asli API key daalni hai
+        api_key = "YOUR_API_KEY" 
+        
+        if api_key == "YOUR_API_KEY":
+            self.status_label.text = "[color=ffaa00][b]Pehle apni Gemini API Key daaliye bhai![/b][/color]"
+            return
 
-        # Screen par jawab dikhana
-        self.status_label.text = f"[color=00ff66][b]{response_text}[/b][/color]"
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+            
+            data = {
+                "contents": [{
+                    "parts": [{"text": query}]
+                }]
+            }
+            
+            req_data = json.dumps(data).encode('utf-8')
+            req = urllib.request.Request(url, data=req_data, headers={'Content-Type': 'application/json'})
+            
+            with urllib.request.urlopen(req, timeout=10) as response:
+                res_body = response.read().decode('utf-8')
+                res_json = json.loads(res_body)
+                
+                # Gemini ka asli jawab nikalna
+                answer = res_json['candidates'][0]['content']['parts'][0]['text']
+                self.status_label.text = f"[color=00ff66][b]{answer[:200]}[/b][/color]"
+                
+        except Exception as e:
+            self.status_label.text = f"[color=ff3333][b]Error: {str(e)[:100]}[/b][/color]"
 
 
 class TestApp(App):
@@ -83,3 +104,4 @@ class TestApp(App):
 
 if __name__ == '__main__':
     TestApp().run()
+    
