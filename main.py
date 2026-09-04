@@ -1,7 +1,3 @@
-from datetime import datetime
-import json
-import urllib.request
-import urllib.error
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
@@ -24,20 +20,19 @@ class JarvisAssistant(BoxLayout):
 
         # Status Label
         self.status_label = Label(
-            text="[color=00ff66][b]Jarvis: Gemini Brain Connected![/b][/color]",
+            text="[color=00ff66][b]Jarvis: Ready & Stable[/b][/color]",
             markup=True,
-            font_size='16sp',
+            font_size='18sp',
             halign='center',
-            valign='middle',
-            text_size=(300, None)
+            valign='middle'
         )
         self.status_label.bind(size=self.status_label.setter('text_size'))
         self.add_widget(self.status_label)
 
-        # Text Input (Sawal type karne ke liye)
+        # Text Input
         self.user_input = TextInput(
             text='',
-            hint_text='Aamir bhai, yahan apna sawal likhiye...',
+            hint_text='Yahan apna sawal likhiye...',
             size_hint=(1, 0.25),
             font_size='16sp',
             multiline=False
@@ -46,55 +41,25 @@ class JarvisAssistant(BoxLayout):
 
         # Action Button
         self.action_btn = Button(
-            text="Gemini se Poochhein",
+            text="Jawab Dekhein",
             font_size='18sp',
             size_hint=(1, 0.25),
             background_color=(0.1, 0.5, 0.8, 1)
         )
-        self.action_btn.bind(on_press=self.ask_gemini_brain)
+        self.action_btn.bind(on_press=self.on_button_click)
         self.add_widget(self.action_btn)
 
     def _update_rect(self, instance, value):
         self.rect.pos = instance.pos
         self.rect.size = instance.size
 
-    def ask_gemini_brain(self, instance):
+    def on_button_click(self, instance):
         query = self.user_input.text.strip()
         if not query:
-            self.status_label.text = "[color=ff3333][b]Pehle kuch likhiye toh sahi, Aamir bhai![/b][/color]"
+            self.status_label.text = "[color=ff3333][b]Pehle kuch toh likhiye bhai![/b][/color]"
             return
-
-        self.status_label.text = f"[color=00f0ff][b]Sawal: {query}\nGemini se baat ho rahi hai...[/b][/color]"
         
-        # Yahan apni asli API key daalni hai
-        api_key = "YOUR_API_KEY" 
-        
-        if api_key == "YOUR_API_KEY":
-            self.status_label.text = "[color=ffaa00][b]Pehle apni Gemini API Key daaliye bhai![/b][/color]"
-            return
-
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-            
-            data = {
-                "contents": [{
-                    "parts": [{"text": query}]
-                }]
-            }
-            
-            req_data = json.dumps(data).encode('utf-8')
-            req = urllib.request.Request(url, data=req_data, headers={'Content-Type': 'application/json'})
-            
-            with urllib.request.urlopen(req, timeout=10) as response:
-                res_body = response.read().decode('utf-8')
-                res_json = json.loads(res_body)
-                
-                # Gemini ka asli jawab nikalna
-                answer = res_json['candidates'][0]['content']['parts'][0]['text']
-                self.status_label.text = f"[color=00ff66][b]{answer[:200]}[/b][/color]"
-                
-        except Exception as e:
-            self.status_label.text = f"[color=ff3333][b]Error: {str(e)[:100]}[/b][/color]"
+        self.status_label.text = f"[color=00f0ff][b]Aapne pucha: {query}[/b][/color]"
 
 
 class TestApp(App):
