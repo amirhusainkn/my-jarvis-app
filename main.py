@@ -1,146 +1,85 @@
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
-from kivy.uix.textinput import TextInput
 from kivy.uix.button import Button
-from kivy.clock import Clock
-import datetime
+from kivy.uix.textinput import TextInput
+from kivy.graphics import Color, Rectangle
+from kivy.utils import platform
 
-try:
-    from jnius import autoclass
-    from plyer import tts, sms
-    PYTHON_ANDROID = True
-except:
-    PYTHON_ANDROID = False
+# Android par bolne ke liye TTS engine import karne ki taiyari
+if platform == 'android':
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        TextToSpeech = autoclass('android.speech.tts.TextToSpeech')
+        Locale = autoclass('java.util.Locale')
+    except Exception:
+        pass
 
-class JarvisMasterApp(BoxLayout):
+class JarvisAssistant(BoxLayout):
     def __init__(self, **kwargs):
-        super(JarvisMasterApp, self).__init__(**kwargs)
+        super(JarvisAssistant, self).__init__(**kwargs)
         self.orientation = 'vertical'
-        self.padding = 15
-        self.spacing = 10
+        self.padding = 40
+        self.spacing = 25
 
-        # Status & Time/Date Display
+        # Dark theme background (AI style)
+        with self.canvas.before:
+            Color(0.03, 0.03, 0.06, 1)
+            self.rect = Rectangle(size=self.size, pos=self.pos)
+        self.bind(size=self._update_rect, pos=self._update_rect)
+
+        # Status / Output Label
         self.status_label = Label(
-            text='Jarvis Master: All Systems Active 🚀',
-            font_size=16,
-            color=(0, 1, 0, 1)
+            text="[color=00ff66][b]Jarvis Online: Main taiyar hoon, Aamir bhai![/b][/color]",
+            markup=True,
+            font_size='18sp',
+            halign='center',
+            valign='middle'
         )
+        self.status_label.bind(size=self.status_label.setter('text_size'))
         self.add_widget(self.status_label)
 
-        # DateTime Display Label
-        self.time_label = Label(
-            text='Waqt aur Tarikh load ho rahi hai...',
-            font_size=14
-        )
-        self.add_widget(self.time_label)
-        
-        # Har second waqt aur din update karne ke liye clock
-        Clock.schedule_interval(self.update_datetime, 1.0)
-
-        # Input Box
-        self.input_box = TextInput(
+        # Single Text Input Box
+        self.user_input = TextInput(
             text='',
-            hint_text='Yahan kuch bhi type karein ya command dein...',
-            size_hint_y=None,
-            height=80
+            hint_text='Yahan apna sawal ya command likhiye...',
+            size_hint=(1, 0.2),
+            font_size='16sp',
+            multiline=False
         )
-        self.add_widget(self.input_box)
+        self.add_widget(self.user_input)
 
-        # Output / Response Display
-        self.output_label = Label(
-            text='Jarvis output yahan show hoga...',
-            font_size=15
+        # Sirf Ek Main Button
+        self.action_btn = Button(
+            text="Jarvis se Baat Karein",
+            font_size='18sp',
+            size_hint=(1, 0.2),
+            background_color=(0.1, 0.6, 0.9, 1)
         )
-        self.add_widget(self.output_label)
+        self.action_btn.bind(on_press=self.process_command)
+        self.add_widget(self.action_btn)
 
-        # Button 1: Command Process & Emoji Message Maker
-        self.emoji_btn = Button(
-            text='Emoji Message Bhejein & Check Karein',
-            size_hint_y=None,
-            height=45,
-            background_color=(0.1, 0.4, 0.7, 1)
-        )
-        self.emoji_btn.bind(on_press=self.send_emoji_message)
-        self.add_widget(self.emoji_btn)
+    def _update_rect(self, instance, value):
+        self.rect.pos = instance.pos
+        self.rect.size = instance.size
 
-        # Button 2: WhatsApp Reader Feature
-        self.wa_btn = Button(
-            text='WhatsApp Messages Read Karein',
-            size_hint_y=None,
-            height=45,
-            background_color=(0.1, 0.7, 0.3, 1)
-        )
-        self.wa_btn.bind(on_press=self.read_whatsapp_messages)
-        self.add_widget(self.wa_btn)
-
-        # Button 3: Screen Reader Feature
-        self.screen_btn = Button(
-            text='Screen Text Read Karein',
-            size_hint_y=None,
-            height=45,
-            background_color=(0.7, 0.5, 0.1, 1)
-        )
-        self.screen_btn.bind(on_press=self.read_screen_content)
-        self.add_widget(self.screen_btn)
-
-        # Button 4: Anti-Theft & Pocket Guard
-        self.guard_btn = Button(
-            text='Anti-Theft Pocket Guard (Alarm)',
-            size_hint_y=None,
-            height=45,
-            background_color=(0.8, 0.2, 0.2, 1)
-        )
-        self.guard_btn.bind(on_press=self.toggle_pocket_guard)
-        self.add_widget(self.guard_btn)
-
-        self.guard_active = False
-
-    def update_datetime(self, dt):
-        now = datetime.datetime.now()
-        current_time = now.strftime("%H:%M:%S")
-        current_date = now.strftime("%d-%m-%Y")
-        current_day = now.strftime("%A")
-        self.time_label.text = f"Din: {current_day} | Tarikh: {current_date} | Waqt: {current_time}"
-
-    def send_emoji_message(self, instance):
-        user_text = self.input_box.text
-        if not user_text:
-            user_text = "Hello dost, sab kheriyat hai?"
+    def process_command(self, instance):
+        query = self.user_input.text.strip()
+        if not query:
+            self.status_label.text = "[color=ff3333][b]Pehle kuch toh likhiye Aamir bhai![/b][/color]"
+            return
         
-        # Message ko emojis ke sath sajane ka feature
-        styled_message = f"✨ {user_text} 🔥 👍 (Jarvis Verified)"
-        self.output_label.text = f"Bheja gaya message:\n{styled_message}"
+        # Yahan par abhi hum command receive kar rahe hain
+        self.status_label.text = f"[color=00f0ff][b]Aapne kaha: {query}[/b][/color]"
+        # Agle step mein hum isme Gemini aur Voice output ka asli connection jodenge
 
-    def read_whatsapp_messages(self, instance):
-        self.output_label.text = "📱 WhatsApp Reader: Aakhri unread messages ko scan kiya ja raha hai..."
-        if PYTHON_ANDROID:
-            try:
-                # Notification access ke zariye WhatsApp messages read karne ka hook
-                pass
-            except:
-                pass
 
-    def read_screen_content(self, instance):
-        self.output_label.text = "👁️ Screen Reader: Mojooda screen ka text padh liya gaya hai."
-
-    def toggle_pocket_guard(self, instance):
-        if not self.guard_active:
-            self.guard_active = True
-            self.output_label.text = "🚨 Pocket Guard Active! Agar koi phone nikalgayega toh aawaj ayegi: 'Yeh hath dusre ka hai!'"
-            if PYTHON_ANDROID:
-                try:
-                    tts.speak("Pocket guard on kar diya gaya hai.")
-                except:
-                    pass
-        else:
-            self.guard_active = False
-            self.output_label.text = "🔒 Pocket Guard Band. (Fingerprint verification required to unlock)"
-
-class MyApp(App):
+class JarvisApp(App):
     def build(self):
-        return JarvisMasterApp()
+        return JarvisAssistant()
+
 
 if __name__ == '__main__':
-    MyApp().run()
+    JarvisApp().run()
     
