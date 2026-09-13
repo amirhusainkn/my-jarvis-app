@@ -1,37 +1,29 @@
+import time
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.button import Button
-from kivy.uix.textinput import TextInput
-from kivy.graphics import Color, Rectangle
 from kivy.utils import platform
+from kivy.clock import Clock
 
-# Android par bolne ke liye TTS engine import karne ki taiyari
 if platform == 'android':
-    try:
-        from jnius import autoclass
-        PythonActivity = autoclass('org.kivy.android.PythonActivity')
-        TextToSpeech = autoclass('android.speech.tts.TextToSpeech')
-        Locale = autoclass('java.util.Locale')
-    except Exception:
-        pass
+    from jnius import autoclass
+    PythonActivity = autoclass('org.kivy.android.PythonActivity')
+    TextToSpeech = autoclass('android.speech.tts.TextToSpeech')
+    Locale = autoclass('java.util.Locale')
+    Intent = autoclass('android.content.Intent')
+    RecognizerIntent = autoclass('android.speech.RecognizerIntent')
+    ActivityResult = autoclass('android.app.Activity')
 
 class JarvisAssistant(BoxLayout):
     def __init__(self, **kwargs):
         super(JarvisAssistant, self).__init__(**kwargs)
         self.orientation = 'vertical'
         self.padding = 40
-        self.spacing = 25
+        self.spacing = 20
 
-        # Dark theme background (AI style)
-        with self.canvas.before:
-            Color(0.03, 0.03, 0.06, 1)
-            self.rect = Rectangle(size=self.size, pos=self.pos)
-        self.bind(size=self._update_rect, pos=self._update_rect)
-
-        # Status / Output Label
         self.status_label = Label(
-            text="[color=00ff66][b]Jarvis Online: Main taiyar hoon, Aamir bhai![/b][/color]",
+            text="[color=00ff66][b]Jarvis Voice & Ears Active[/b][/color]",
             markup=True,
             font_size='18sp',
             halign='center',
@@ -40,39 +32,64 @@ class JarvisAssistant(BoxLayout):
         self.status_label.bind(size=self.status_label.setter('text_size'))
         self.add_widget(self.status_label)
 
-        # Single Text Input Box
-        self.user_input = TextInput(
-            text='',
-            hint_text='Yahan apna sawal ya command likhiye...',
-            size_hint=(1, 0.2),
-            font_size='16sp',
-            multiline=False
-        )
-        self.add_widget(self.user_input)
-
-        # Sirf Ek Main Button
-        self.action_btn = Button(
-            text="Jarvis se Baat Karein",
+        self.listen_btn = Button(
+            text="Jarvis se Baat Karein (Mic On)",
             font_size='18sp',
-            size_hint=(1, 0.2),
+            size_hint=(1, 0.3),
             background_color=(0.1, 0.6, 0.9, 1)
         )
-        self.action_btn.bind(on_press=self.process_command)
-        self.add_widget(self.action_btn)
+        self.listen_btn.bind(on_press=self.start_listening)
+        self.add_widget(self.listen_btn)
 
-    def _update_rect(self, instance, value):
-        self.rect.pos = instance.pos
-        self.rect.size = instance.size
+        self.tts_engine = None
+        if platform == 'android':
+            try:
+                self.tts_engine = TextToSpeech(PythonActivity.mActivity, None)
+                self.tts_engine.setLanguage(Locale.getDefault())
+            except Exception as e:
+                print("TTS Init Error:", e)
 
-    def process_command(self, instance):
-        query = self.user_input.text.strip()
-        if not query:
-            self.status_label.text = "[color=ff3333][b]Pehle kuch toh likhiye Aamir bhai![/b][/color]"
-            return
-        
-        # Yahan par abhi hum command receive kar rahe hain
-        self.status_label.text = f"[color=00f0ff][b]Aapne kaha: {query}[/b][/color]"
-        # Agle step mein hum isme Gemini aur Voice output ka asli connection jodenge
+        Clock.schedule_once(self.welcome_speech, 2)
+
+    def speak(self, text):
+        self.status_label.text = f"[color=00f0ff][b]{text}[/b][/color]"
+        if platform == 'android' and self.tts_engine:
+            try:
+                self.tts_engine.speak(text, TextToSpeech.QUEUE_FLUSH, None, None)
+            except Exception as e:
+                print("TTS Speak Error:", e)
+
+    def welcome_speech(self, dt):
+        greeting = "Aamir Hussain, Jarvis ready hai. Boliye, kya kar sakta hoon?"
+        self.speak(greeting)
+
+    def start_listening(self, instance):
+        if platform == 'android':
+            try:
+                self.status_label.text = "[color=ffff00][b]Suna ja raha hai... boliye![/b][/color]"
+                intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toString())
+                intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Aamir bhai, kuch boliye...")
+                
+                activity = PythonActivity.mActivity
+                activity.startActivityForResult(intent, 1000)
+            except Exception as e:
+                self.speak("Mic shuru karne mein kuch dikkat aayi hai.")
+        else:
+            self.process_command("time batao")
+
+    def process_command(self, query):
+        query = query.lower()
+        if "time" in query or "samay" in query or "waqt" in query:
+            current_time = time.strftime("%I:%M %p")
+            response = f"Abhi samay ho raha hai, {current_time}"
+            self.speak(response)
+        elif "kaun ho" in query or "who are you" in query:
+            self.speak("Main aapka personal AI assistant Jarvis hoon, Aamir bhai.")
+        else:
+            response = f"Aapne kaha hai: {query}"
+            self.speak(response)
 
 
 class JarvisApp(App):
