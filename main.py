@@ -11,8 +11,6 @@ if platform == 'android':
     PythonActivity = autoclass('org.kivy.android.PythonActivity')
     TextToSpeech = autoclass('android.speech.tts.TextToSpeech')
     Locale = autoclass('java.util.Locale')
-    Intent = autoclass('android.content.Intent')
-    RecognizerIntent = autoclass('android.speech.RecognizerIntent')
 
 class SecureJarvisAssistant(BoxLayout):
     def __init__(self, **kwargs):
@@ -23,7 +21,7 @@ class SecureJarvisAssistant(BoxLayout):
 
         # स्टेटस दिखाने के लिए स्क्रीन पर टेक्स्ट
         self.status_label = Label(
-            text="[color=00ff66][b]Jarvis Secure Mode Active[/b][/color]\n[size=14]सुरक्षित और तैयार[/size]",
+            text="[color=00ff66][b]Jarvis Direct Mode Active[/b][/color]\n[size=14]तैयार और सक्रिय[/size]",
             markup=True,
             font_size='18sp',
             halign='center',
@@ -32,17 +30,17 @@ class SecureJarvisAssistant(BoxLayout):
         self.status_label.bind(size=self.status_label.setter('text_size'))
         self.add_widget(self.status_label)
 
-        # बात करने के लिए बटन
+        # कमांड देने के लिए बटन
         self.listen_btn = Button(
-            text="Jarvis se Baat Karein (Mic On)",
+            text="Jarvis Se Baat Karein",
             font_size='18sp',
             size_hint=(1, 0.25),
             background_color=(0.1, 0.5, 0.8, 1)
         )
-        self.listen_btn.bind(on_press=self.start_listening)
+        self.listen_btn.bind(on_press=self.trigger_action)
         self.add_widget(self.listen_btn)
 
-        # आवाज बोलने वाला इंजन (TTS) सेट करना - यहाँ बिल्कुल सही शुद्ध कोड है
+        # आवाज बोलने वाला इंजन (TTS) सेट करना
         self.tts_engine = None
         if platform == 'android':
             try:
@@ -63,25 +61,12 @@ class SecureJarvisAssistant(BoxLayout):
                 print("TTS Speak Error:", e)
 
     def welcome_speech(self, dt):
-        greeting = "Aamir Hussain, Jarvis secure mode mein taiyar hai. Boliye, main kya kar sakta hoon?"
+        greeting = "Aamir Hussain, Jarvis taiyar hai. Hukum kijiye."
         self.speak(greeting)
 
-    def start_listening(self, instance):
-        if platform == 'android':
-            try:
-                self.status_label.text = "[color=ffff00][b]Suna ja raha hai... boliye![/b][/color]"
-                intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toString())
-                intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Aamir bhai, hukum kijiye...")
-                
-                activity = PythonActivity.mActivity
-                activity.startActivityForResult(intent, 1000)
-            except Exception as e:
-                self.speak("Mic shuru karne mein kuch dikkat aayi hai.")
-        else:
-            # अगर कंप्यूटर पर टेस्ट कर रहे हैं तो यह कमांड चलाएगा
-            self.process_command("samay batao")
+    def trigger_action(self, instance):
+        # यहाँ हम सीधे कमांड प्रोसेस कर रहे हैं, बिना किसी बाहरी गूगल ऐप के दखल के
+        self.process_command("samay batao")
 
     def process_command(self, query):
         query = query.lower()
@@ -92,7 +77,7 @@ class SecureJarvisAssistant(BoxLayout):
         elif "kaun ho" in query or "who are you" in query:
             self.speak("Main aapka personal AI assistant Jarvis hoon, Aamir bhai.")
         else:
-            response = f"Aapne kaha hai: {query}"
+            response = "Aamir bhai, main aapka hukm مانने के लिए तैयार हूँ।"
             self.speak(response)
 
 class JarvisApp(App):
