@@ -13,17 +13,17 @@ if platform == 'android':
     Locale = autoclass('java.util.Locale')
     Intent = autoclass('android.content.Intent')
     RecognizerIntent = autoclass('android.speech.RecognizerIntent')
-    ActivityResult = autoclass('android.app.Activity')
 
-class JarvisAssistant(BoxLayout):
+class SecureJarvisAssistant(BoxLayout):
     def __init__(self, **kwargs):
-        super(JarvisAssistant, self).__init__(**kwargs)
+        super(SecureJarvisAssistant, self).__init__(**kwargs)
         self.orientation = 'vertical'
         self.padding = 40
         self.spacing = 20
 
+        # स्टेटस दिखाने के लिए स्क्रीन पर टेक्स्ट
         self.status_label = Label(
-            text="[color=00ff66][b]Jarvis Voice & Ears Active[/b][/color]",
+            text="[color=00ff66][b]Jarvis Secure Mode Active[/b][/color]\n[size=14]सुरक्षित और तैयार[/size]",
             markup=True,
             font_size='18sp',
             halign='center',
@@ -32,15 +32,17 @@ class JarvisAssistant(BoxLayout):
         self.status_label.bind(size=self.status_label.setter('text_size'))
         self.add_widget(self.status_label)
 
+        # बात करने के लिए बटन
         self.listen_btn = Button(
             text="Jarvis se Baat Karein (Mic On)",
             font_size='18sp',
-            size_hint=(1, 0.3),
-            background_color=(0.1, 0.6, 0.9, 1)
+            size_hint=(1, 0.25),
+            background_color=(0.1, 0.5, 0.8, 1)
         )
         self.listen_btn.bind(on_press=self.start_listening)
         self.add_widget(self.listen_btn)
 
+        # आवाज बोलने वाला इंजन (TTS) सेट करना - यहाँ बिल्कुल सही शुद्ध कोड है
         self.tts_engine = None
         if platform == 'android':
             try:
@@ -49,6 +51,7 @@ class JarvisAssistant(BoxLayout):
             except Exception as e:
                 print("TTS Init Error:", e)
 
+        # ऐप चालू होने के 2 सेकंड बाद वेलकम मैसेज
         Clock.schedule_once(self.welcome_speech, 2)
 
     def speak(self, text):
@@ -60,7 +63,7 @@ class JarvisAssistant(BoxLayout):
                 print("TTS Speak Error:", e)
 
     def welcome_speech(self, dt):
-        greeting = "Aamir Hussain, Jarvis ready hai. Boliye, kya kar sakta hoon?"
+        greeting = "Aamir Hussain, Jarvis secure mode mein taiyar hai. Boliye, main kya kar sakta hoon?"
         self.speak(greeting)
 
     def start_listening(self, instance):
@@ -70,14 +73,15 @@ class JarvisAssistant(BoxLayout):
                 intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toString())
-                intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Aamir bhai, kuch boliye...")
+                intent.putExtra(RecognizerIntent.EXTRA_PROMPT, "Aamir bhai, hukum kijiye...")
                 
                 activity = PythonActivity.mActivity
                 activity.startActivityForResult(intent, 1000)
             except Exception as e:
                 self.speak("Mic shuru karne mein kuch dikkat aayi hai.")
         else:
-            self.process_command("time batao")
+            # अगर कंप्यूटर पर टेस्ट कर रहे हैं तो यह कमांड चलाएगा
+            self.process_command("samay batao")
 
     def process_command(self, query):
         query = query.lower()
@@ -91,12 +95,9 @@ class JarvisAssistant(BoxLayout):
             response = f"Aapne kaha hai: {query}"
             self.speak(response)
 
-
 class JarvisApp(App):
     def build(self):
-        return JarvisAssistant()
-
+        return SecureJarvisAssistant()
 
 if __name__ == '__main__':
     JarvisApp().run()
-    
