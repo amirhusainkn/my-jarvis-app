@@ -1,4 +1,5 @@
 package com.jarvis.app
+
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.widget.Button
@@ -15,7 +16,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // यहाँ हम ऐप की स्क्रीन का ढांचा तैयार कर रहे हैं
         val layout = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(50, 50, 50, 50)
@@ -30,7 +30,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             text = "जार्विस से बात करें"
             textSize = 18f
             setOnClickListener {
-                speakOut("नमस्ते आमिर भाई, मैं आपका जार्विस हूँ। बताइए, मैं आपकी क्या मदद करूँ?")
+                speakOut("सर, सभी सिस्टम चालू हैं। नेटवर्क और बैटरी पूरी तरह ठीक स्थिति में हैं। अगला आदेश क्या है?")
             }
         }
 
@@ -38,15 +38,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         layout.addView(speakButton)
         setContentView(layout)
 
-        // जुबान (TTS) इंजन को शुरू करना
         tts = TextToSpeech(this, this)
     }
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val result = tts?.setLocale(Locale("hi", "IN")) // हिंदी आवाज़ सेट करना
+            val result = tts?.setLocale(Locale("hi", "IN"))
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                statusText.text = "भाषा समर्थित नहीं है!"
+                statusText.text = "भाषा का डेटा मौजूद नहीं है!"
             }
         }
     }
@@ -64,4 +63,3 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onDestroy()
     }
 }
-
