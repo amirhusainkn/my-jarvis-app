@@ -43,7 +43,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         layout.addView(actionButton)
         setContentView(layout)
 
-        // Text-to-Speech और स्पीच रिकग्निशन को चालू करना
+        // Text-to-Speech को पूरी प्राथमिकता के साथ इनिशियलाइज करना
         tts = TextToSpeech(this, this)
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
 
@@ -66,8 +66,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     val spokenText = matches[0]
                     statusText.text = "आपने कहा: $spokenText"
                     
-                    // जार्विस का जवाब
-                    tts?.speak("मैंने आपकी बात सुन ली है, सर। सभी सिस्टम चालू हैं और बैटरी पूरी तरह ठीक स्थिति में है। अगला आदेश क्या है?", TextToSpeech.QUEUE_FLUSH, null, null)
+                    speakOut("मैंने आपकी बात सुन li hai, sir. सभी सिस्टम चालू हैं।")
                 }
             }
             override fun onPartialResults(partialResults: Bundle?) {}
@@ -81,11 +80,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                 statusText.text = "Language not supported!"
             } else {
-                val welcomeText = "Sabhi systems online hain, Sir. Abhi samay ho raha hai"
-                statusText.text = welcomeText
-                tts?.speak(welcomeText, TextToSpeech.QUEUE_FLUSH, null, null)
+                speakOut("Sabhi systems online hain, Sir.")
             }
         }
+    }
+
+    private fun speakOut(text: String) {
+        // यहाँ AUDIO_STREAM_MUSIC और QUEUE_FLUSH के साथ आवाज को फोर्स किया गया है
+        val params = Bundle().apply {
+            putString(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_MUSIC.toString())
+        }
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "JarvisUtteranceId")
     }
 
     private fun startListening() {
@@ -103,3 +108,4 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         super.onDestroy()
     }
 }
+
