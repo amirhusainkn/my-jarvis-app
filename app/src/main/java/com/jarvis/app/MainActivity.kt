@@ -20,18 +20,17 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         val layout = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
             setPadding(50, 50, 50, 50)
         }
 
         statusText = TextView(this).apply {
-            text = "जार्विस कोर ऑनलाइन है"
+            text = "जार्विस कनेक्ट हो रहा है"
             textSize = 20f
         }
 
-        // सिर्फ एक ही स्मार्ट बटन - सुनने और बात करने के लिए
         actionButton = Button(this).apply {
             text = "Jarvis Active (बात करें)"
             textSize = 18f
@@ -44,10 +43,10 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         layout.addView(actionButton)
         setContentView(layout)
 
-        // जुबान (TTS) और कान (SpeechRecognizer) को चालू करना
+        // Text-to-Speech और स्पीच रिकग्निशन को चालू करना
         tts = TextToSpeech(this, this)
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
-        
+
         speechRecognizer.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
                 statusText.text = "सुन रहा हूँ सर..."
@@ -67,8 +66,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     val spokenText = matches[0]
                     statusText.text = "आपने कहा: $spokenText"
                     
-                    // जार्विस का फिक्स डायलॉग
-                    speakOut("सर, सभी सिस्टम चालू हैं। नेटवर्क और बैटरी पूरी तरह ठीक स्थिति में हैं। अगला आदेश क्या है?")
+                    // जार्विस का जवाब
+                    tts?.speak("मैंने आपकी बात सुन ली है, सर। सभी सिस्टम चालू हैं और बैटरी पूरी तरह ठीक स्थिति में है। अगला आदेश क्या है?", TextToSpeech.QUEUE_FLUSH, null, null)
                 }
             }
             override fun onPartialResults(partialResults: Bundle?) {}
@@ -78,7 +77,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            tts?.setLocale(Locale("hi", "IN"))
+            val result = tts?.setLanguage(Locale("hi", "IN"))
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                statusText.text = "Language not supported!"
+            } else {
+                val welcomeText = "Sabhi systems online hain, Sir. Abhi samay ho raha hai"
+                statusText.text = welcomeText
+                tts?.speak(welcomeText, TextToSpeech.QUEUE_FLUSH, null, null)
+            }
         }
     }
 
@@ -86,22 +92,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "जार्विस सुन रहा है, बोलिए...")
         }
         speechRecognizer.startListening(intent)
     }
 
-    private fun speakOut(text: String) {
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "")
-    }
-
     override fun onDestroy() {
-        if (tts != null) {
-            tts?.stop()
-            tts?.shutdown()
-        }
+        tts?.stop()
+        tts?.shutdown()
         speechRecognizer.destroy()
         super.onDestroy()
     }
 }
-
