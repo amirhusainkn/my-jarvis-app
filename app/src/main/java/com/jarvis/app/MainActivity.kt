@@ -43,7 +43,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         layout.addView(actionButton)
         setContentView(layout)
 
-        // Text-to-Speech को पूरी प्राथमिकता के साथ इनिशियलाइज करना
+        // Text-to-Speech को इनिशियलाइज करना
         tts = TextToSpeech(this, this)
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
 
@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                     val spokenText = matches[0]
                     statusText.text = "आपने कहा: $spokenText"
                     
-                    speakOut("मैंने आपकी बात सुन li hai, sir. सभी सिस्टम चालू हैं।")
+                    speakOut("मैंने आपकी बात सुन ली है, सर।")
                 }
             }
             override fun onPartialResults(partialResults: Bundle?) {}
@@ -80,25 +80,29 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                 statusText.text = "Language not supported!"
             } else {
-                speakOut("Sabhi systems online hain, Sir.")
+                speakOut("Sabhi systems online hain, Sir. Abhi samay ho raha hai")
             }
         }
     }
 
     private fun speakOut(text: String) {
-        // यहाँ AUDIO_STREAM_MUSIC और QUEUE_FLUSH के साथ आवाज को फोर्स किया गया है
+        // यहाँ सीधे म्यूजिक स्ट्रीम और फ्लश का उपयोग किया गया है ताकि आवाज़ 100% स्पीकर से आए
         val params = Bundle().apply {
             putString(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_MUSIC.toString())
         }
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "JarvisUtteranceId")
     }
 
-    private fun startListening() {
+private fun startListening() {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, "hi-IN")
         }
-        speechRecognizer.startListening(intent)
+        try {
+            speechRecognizer.startListening(intent)
+        } catch (e: Exception) {
+            statusText.text = "Mic error: ${e.message}"
+        }
     }
 
     override fun onDestroy() {
