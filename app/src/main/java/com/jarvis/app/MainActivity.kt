@@ -22,7 +22,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener, Recogniti
     private var tts: TextToSpeech? = null
     private lateinit var statusText: TextView
     private lateinit var actionButton: Button
-    
+
     private var speechService: SpeechService? = null
     private var isListening = false
 
@@ -37,7 +37,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener, Recogniti
         }
 
         statusText = TextView(this).apply {
-            text = "ऑफलाइन जार्विस लोड हो रहा है..."
+            text = "ऑफ़लाइन सिस्टम लोड हो रहा है..."
             textSize = 20f
         }
 
@@ -58,25 +58,24 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener, Recogniti
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_CODE)
         }
 
-        // Text-to-Speech इनिशियलाइज करना
+        // Text-to-Speech initialization करना
         tts = TextToSpeech(this, this)
 
-        // Vosk का ऑफलाइन मॉडल लोड करना
+        // Vosk का ऑफ़लाइन मॉडल लोड करना
         initVoskModel()
     }
 
     private fun initVoskModel() {
-        StorageService.unpack(this, "model-en-us", "model",
-            { model: Model ->
+        StorageService.unpack(this, "model-en-us", "model-en-us",
+            { model ->
                 try {
                     val recognizer = Recognizer(model, 8000.0f)
                     speechService = SpeechService(recognizer, 8000.0f)
-                    statusText.text = "ऑफलाइन सिस्टम तैयार है, सर!"
+                    statusText.text = "ऑफ़लाइन सिस्टम तैयार है, सर!"
                 } catch (e: Exception) {
                     statusText.text = "Model init error: ${e.message}"
                 }
-            },
-            { exception: IOException ->
+            }, { exception ->
                 statusText.text = "Failed to unpack model: ${exception.message}"
             }
         )
@@ -96,15 +95,15 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener, Recogniti
         } else {
             isListening = false
             actionButton.text = "Offline Jarvis Start"
-            statusText.text = "रुक गया।"
+            statusText.text = "رک گیا हूँ"
             speechService?.stop()
         }
     }
 
     override fun onResult(hypothesis: String?) {
-        // यहाँ Vosk को बिना इंटरनेट के जो आवाज़ सुनाई देगी, उसका टेक्स्ट मिलेगा
+        // यहाँ Vosk की बिना इंटरनेट की जो आवाज सुनाई देगी, उसका टेक्स्ट मिलेगा
         hypothesis?.let {
-            statusText.text = "सुना गया: $it"
+            statusText.text = "बूल 'क्या' सर: $it"
             speakOut("Sir, I received your offline command.")
         }
     }
@@ -137,4 +136,3 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener, Recogniti
         super.onDestroy()
     }
 }
-
