@@ -2,9 +2,10 @@ package com.jarvis.app
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.media.AudioManager
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
-import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -14,118 +15,111 @@ import org.vosk.Recognizer
 import org.vosk.android.RecognitionListener
 import org.vosk.android.SpeechService
 import org.vosk.android.StorageService
-import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener, RecognitionListener {
 
     private var tts: TextToSpeech? = null
     private lateinit var statusText: TextView
-    private lateinit var actionButton: Button
-
     private var speechService: SpeechService? = null
-    private var isListening = false
+    private var isModelReady = false
 
-    private val PERMISSION_REQUEST_CODE = 1
+    companion object {
+        private const val PERMISSION_REQUEST_CODE = 1
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val layout = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(50, 50, 50, 50)
         }
 
         statusText = TextView(this).apply {
-            text = "ऑफ़लाइन सिस्टम लोड हो रहा है..."
+            text = "Jarvis शुरू हो रहा है..."
             textSize = 20f
         }
 
-        actionButton = Button(this).apply {
-            text = "Offline Jarvis Start"
-            textSize = 18f
-            setOnClickListener {
-                toggleListening()
-            }
-        }
-
         layout.addView(statusText)
-        layout.addView(actionButton)
         setContentView(layout)
 
-        // माइक्रोफोन की परमिशन चेक करना
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_CODE)
-        }
-
-        // Text-to-Speech initialization करना
         tts = TextToSpeech(this, this)
 
-        // Vosk का ऑफ़लाइन मॉडल लोड करना
-        initVoskModel()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_CODE)
+        } else {
+            initVoskModel()
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == PERMISSION_REQUEST_CODE && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            initVoskModel()
+        } else {
+            statusText.text = "माइक की अनुमति ज़रूरी है।"
+        }
     }
 
     private fun initVoskModel() {
         StorageService.unpack(this, "model-en-us", "model-en-us",
-            { model ->
+            { model: Model ->
                 try {
                     val recognizer = Recognizer(model, 8000.0f)
                     speechService = SpeechService(recognizer, 8000.0f)
-                    statusText.text = "ऑफ़लाइन सिस्टम तैयार है, सर!"
+                    isModelReady = true
+                    statusText.text = "सुन रहा हूँ... टाइम पूछें।"
+                    speechService?.startListening(this)
                 } catch (e: Exception) {
                     statusText.text = "Model init error: ${e.message}"
                 }
-            }, { exception ->
+            },
+            { exception ->
                 statusText.text = "Failed to unpack model: ${exception.message}"
             }
         )
     }
 
-    private fun toggleListening() {
-        if (speechService == null) {
-            statusText.text = "मॉडल अभी लोड हो रहा है, थोड़ा इंतज़ार करें..."
-            return
-        }
-
-        if (!isListening) {
-            isListening = true
-            actionButton.text = "सुन रहा हूँ... (रोकने के लिए दबाएं)"
-            statusText.text = "Listening offline..."
-            speechService?.startListening(this)
-        } else {
-            isListening = false
-            actionButton.text = "Offline Jarvis Start"
-            statusText.text = "رک گیا हूँ"
-            speechService?.stop()
-        }
-    }
-
     override fun onResult(hypothesis: String?) {
-        // यहाँ Vosk की बिना इंटरनेट की जो आवाज सुनाई देगी, उसका टेक्स्ट मिलेगा
-        hypothesis?.let {
-            statusText.text = "बूल 'क्या' सर: $it"
-            speakOut("Sir, I received your offline command.")
+        val spoken = hypothesis?.lowercase(Locale.getDefault()) ?: ""
+        if (spoken.contains("time") || spoken.contains("टाइम") || spoken.contains("समय")) {
+            val currentTime = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+            val reply = "अभी समय $currentTime हो रहा है।"
+            statusText.text = reply
+            speakOut(reply)
         }
     }
 
     override fun onFinalResult(hypothesis: String?) {}
     override fun onPartialResult(hypothesis: String?) {}
+
     override fun onError(exception: Exception?) {
         statusText.text = "Error: ${exception?.message}"
     }
-    override fun onTimeout() {}
+
+    override fun onTimeout() {
+        if (isModelReady) {
+            speechService?.startListening(this)
+        }
+    }
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            tts?.setLanguage(Locale.US)
+            val langResult = tts?.setLanguage(Locale("hi", "IN"))
+            if (langResult == TextToSpeech.LANG_MISSING_DATA || langResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+                tts?.setLanguage(Locale.US)
+            }
         }
     }
 
     private fun speakOut(text: String) {
         val params = Bundle().apply {
-            putString(TextToSpeech.Engine.KEY_PARAM_STREAM, android.media.AudioManager.STREAM_MUSIC.toString())
+            putString(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC.toString())
         }
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "OfflineJarvisId")
+        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "JarvisTimeId")
     }
 
     override fun onDestroy() {
