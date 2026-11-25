@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
 
     private var tts: TextToSpeech? = null
     private var ttsReady: Boolean = false
+    private var startupSpoken: Boolean = false
 
     private var recognizer: Recognizer? = null
     private var speechService: SpeechService? = null
@@ -55,14 +56,14 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
 
         statusText = TextView(this).apply {
-            text = "Jarvis शुरू हो रहा है..."
+            text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।"
             textSize = 20f
         }
 
         layout.addView(statusText)
         setContentView(layout)
 
-        // 1. पहले ऑफ़लाइन लोकल TTS इंजन तैयार करें
+        // 1. पहले ऑफ़लाइन लोकल TTS इंजन तैयार करें और शुरूआती डायलॉग बोलें
         initOfflineTts()
 
         // 2. माइक परमिशन चेक करें और Vosk मॉडल शुरू करें
@@ -85,6 +86,10 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                     }
                 }
                 ttsReady = true
+                if (!startupSpoken) {
+                    startupSpoken = true
+                    speak("सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।", speak = true)
+                }
             } else {
                 ttsReady = false
             }
@@ -101,7 +106,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             initVoskModel()
         } else {
             runOnUiThread {
-                statusText.text = "माइक की अनुमति ज़रूरी है।"
+                statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (माइक अनुमति दें)"
             }
         }
     }
@@ -114,18 +119,18 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                     speechService = SpeechService(recognizer, 8000.0f)
                     isModelReady = true
                     runOnUiThread {
-                        statusText.text = "सुन रहा हूँ... 'time' या 'टाइम' बोलें।"
+                        statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। सुन रहा हूँ..."
                     }
                     speechService?.startListening(this)
                 } catch (e: Exception) {
                     runOnUiThread {
-                        statusText.text = "मॉडल शुरू करने में दिक्कत: ${e.message}"
+                        statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (मॉडल एरर: ${e.message})"
                     }
                 }
             },
             { exception ->
                 runOnUiThread {
-                    statusText.text = "मॉडल अनपैक नहीं हो सका: ${exception.message}"
+                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (मॉडल अनपैक नहीं हो सका: ${exception.message})"
                 }
             }
         )
