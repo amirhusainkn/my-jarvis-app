@@ -23,6 +23,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.4'
+
       - name: Write Clean AndroidManifest
         run: |
           mkdir -p app/src/main
@@ -47,7 +48,7 @@ jobs:
           EOF
 
       - name: Download Vosk Model Automatically
-       run: |
+        run: |
           mkdir -p app/src/main/assets
           rm -rf app/src/main/assets/model-en-us vosk-model-small-en-us-0.15 model.zip
           echo "Downloading Vosk model..."
@@ -58,7 +59,7 @@ jobs:
           rm -f model.zip
           ls -la app/src/main/assets/model-en-us
           echo "Model setup complete!"
-          
+
       - name: Build Debug APK with Gradle
         run: gradle assembleDebug
 
@@ -67,4 +68,3 @@ jobs:
         with:
           name: app-release
           path: app/build/outputs/apk/debug/app-debug.apk
-          
