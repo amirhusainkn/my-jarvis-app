@@ -50,12 +50,12 @@ jobs:
       - name: Download Vosk Model Automatically
         run: |
           mkdir -p app/src/main/assets
-          rm -rf app/src/main/assets/model-en-us vosk-model-small-en-us-0.15 model.zip
-          echo "Downloading Vosk model..."
-          curl -L -o model.zip "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+          rm -rf app/src/main/assets/model-en-us vosk-model-small-en-in-0.4 model.zip
+          echo "Downloading Indian English Vosk model..."
+          curl -L -o model.zip "https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip"
           echo "Extracting model..."
           unzip -q model.zip
-          mv vosk-model-small-en-us-0.15 app/src/main/assets/model-en-us
+          mv vosk-model-small-en-in-0.4 app/src/main/assets/model-en-us
           rm -f model.zip
           ls -la app/src/main/assets/model-en-us
           echo "Model setup complete!"
