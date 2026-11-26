@@ -38,8 +38,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private var mediaPlayer: MediaPlayer? = null
     private var isModelReady: Boolean = false
 
-    // ऑनलाइन आवाज़ के लिए अपनी ElevenLabs API Key और Voice ID डालें
-    // अगर ऑफ़लाइन (लोकल आवाज़) से टेस्ट करना है तो इसे "YOUR_ELEVENLABS_API_KEY" ही रहने दें
     private val elevenLabsApiKey = "YOUR_ELEVENLABS_API_KEY"
     private val elevenLabsVoiceId = "21m00Tcm4TlvDq8ikWAM"
 
@@ -53,21 +51,19 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(50, 50, 50, 50)
+            setPadding(40, 40, 40, 40)
         }
 
         statusText = TextView(this).apply {
             text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।"
-            textSize = 20f
+            textSize = 16f
         }
 
         layout.addView(statusText)
         setContentView(layout)
 
-        // 1. पहले ऑफ़लाइन लोकल TTS इंजन तैयार करें और शुरूआती डायलॉग बोलें
         initOfflineTts()
 
-        // 2. माइक परमिशन चेक करें और Vosk मॉडल शुरू करें
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_CODE)
         } else {
@@ -133,14 +129,15 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 } else {
                     val foundItems = outDir.listFiles()?.joinToString(", ") { it.name } ?: "कुछ नहीं"
                     runOnUiThread {
-                        statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (मॉडल फ़ोल्डर अधूरा: $foundItems)"
+                        statusText.text = "मॉडल फ़ोल्डर अधूरा: $foundItems"
                     }
                 }
             } catch (e: Exception) {
                 val outDir = File(filesDir, "model-en-us")
                 val foundItems = outDir.listFiles()?.joinToString(", ") { it.name } ?: "कुछ नहीं"
+                val traceLines = e.stackTraceToString().lines().take(5).joinToString("\n")
                 runOnUiThread {
-                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (एरर: ${e.message} | अंदर मिला: $foundItems)"
+                    statusText.text = "एरर: ${e.message}\nमिला: $foundItems\n\n$traceLines"
                 }
             }
         }.start()
