@@ -1,5 +1,4 @@
 package com.jarvis.app
-
 import android.Manifest
 import android.content.pm.PackageManager
 import android.content.res.AssetManager
@@ -111,18 +110,33 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
+    private fun findModelRoot(dir: File): File? {
+        if (!dir.exists() || !dir.isDirectory) return null
+        if (File(dir, "am").exists() && File(dir, "conf").exists()) {
+            return dir
+        }
+        val children = dir.listFiles() ?: return null
+        for (child in children) {
+            if (child.isDirectory) {
+                val found = findModelRoot(child)
+                if (found != null) return found
+            }
+        }
+        return null
+    }
+
     private fun initVoskModel() {
         Thread {
             try {
                 val outDir = File(filesDir, "model-en-us")
-                val copied = if (File(outDir, "am").exists()) {
-                    true
-                } else {
-                    copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
+                if (outDir.exists()) {
+                    outDir.deleteRecursively()
                 }
+                val copied = copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
+                val modelRoot = if (copied) findModelRoot(outDir) else null
 
-                if (copied && File(outDir, "am").exists()) {
-                    val model = Model(outDir.absolutePath)
+                if (modelRoot != null) {
+                    val model = Model(modelRoot.absolutePath)
                     recognizer = Recognizer(model, 8000.0f)
                     speechService = SpeechService(recognizer, 8000.0f)
                     isModelReady = true
@@ -131,13 +145,16 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                     }
                     speechService?.startListening(this)
                 } else {
+                    val foundItems = outDir.listFiles()?.joinToString(", ") { it.name } ?: "कुछ नहीं"
                     runOnUiThread {
-                        statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (assets/model-en-us में am फ़ोल्डर नहीं मिला)"
+                        statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (मॉडल फ़ोल्डर अधूरा: $foundItems)"
                     }
                 }
             } catch (e: Exception) {
+                val outDir = File(filesDir, "model-en-us")
+                val foundItems = outDir.listFiles()?.joinToString(", ") { it.name } ?: "कुछ नहीं"
                 runOnUiThread {
-                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (मॉडल एरर: ${e.message})"
+                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (एरर: ${e.message} | अंदर मिला: $foundItems)"
                 }
             }
         }.start()
