@@ -120,8 +120,8 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 if (files == null || files.isEmpty()) {
                     details.add("$sub: खाली (0 फ़ाइल)")
                 } else {
-                    val summary = files.joinToString(", ") { "${it.name}(${it.length()}B)" }
-                    details.add("$sub: $summary")
+                    val summary = files.take(3).joinToString(", ") { "${it.name}(${it.length()}B)" }
+                    details.add("$sub: ${files.size} फ़ाइलें [$summary]")
                 }
             }
         }
@@ -131,16 +131,18 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private fun initVoskModel() {
         Thread {
             val outDir = File(filesDir, "model-en-us")
+            var copiedCount = 0
             try {
                 if (outDir.exists()) {
                     outDir.deleteRecursively()
                 }
-                val copied = copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
+                copiedCount = copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
 
-                if (!copied) {
-                    val info = inspectModelDir(outDir)
+                if (copiedCount == 0) {
+                    val rootAssets = assets.list("")?.joinToString(", ") ?: "खाली"
+                    val modelAssets = assets.list("model-en-us")?.joinToString(", ") ?: "नहीं मिला"
                     runOnUiThread {
-                        statusText.text = "कॉपी पूरा नहीं हुआ:\n$info"
+                        statusText.text = "एसेट में फ़ाइलें नहीं मिलीं (कॉपी: 0)\nAssets root: $rootAssets\nmodel-en-us: $modelAssets"
                     }
                     return@Thread
                 }
@@ -157,37 +159,39 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 val info = inspectModelDir(outDir)
                 val traceLines = e.stackTraceToString().lines().take(4).joinToString("\n")
                 runOnUiThread {
-                    statusText.text = "एरर: ${e.message}\n\nफ़ाइल जाँच:\n$info\n\n$traceLines"
+                    statusText.text = "एरर: ${e.message}\nकॉपी हुई फ़ाइलें: $copiedCount\n\n$info\n\n$traceLines"
                 }
             }
         }.start()
     }
 
-    private fun copyAssetFolder(assetManager: AssetManager, fromAssetPath: String, toPath: String): Boolean {
-        return try {
-            val files = assetManager.list(fromAssetPath) ?: return false
-            val targetDir = File(toPath)
-            if (!targetDir.exists() && !targetDir.mkdirs()) {
-                return false
-            }
-
-            if (files.isEmpty()) {
-                assetManager.open(fromAssetPath).use { input ->
-                    FileOutputStream(toPath).use { output ->
-                        input.copyTo(output)
-                    }
+    private fun copyAssetFolder(assetManager: AssetManager, fromAssetPath: String, toPath: String): Int {
+        var count = 0
+        try {
+            val files = assetManager.list(fromAssetPath)
+            if (files != null && files.isNotEmpty()) {
+                val targetDir = File(toPath)
+                if (!targetDir.exists()) targetDir.mkdirs()
+                for (file in files) {
+                    count += copyAssetFolder(assetManager, "$fromAssetPath/$file", "$toPath/$file")
                 }
             } else {
-                for (file in files) {
-                    val ok = copyAssetFolder(assetManager, "$fromAssetPath/$file", "$toPath/$file")
-                    if (!ok) return false
+                try {
+                    assetManager.open(fromAssetPath).use { input ->
+                        val outFile = File(toPath)
+                        outFile.parentFile?.mkdirs()
+                        FileOutputStream(outFile).use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    count = 1
+                } catch (_: Exception) {
+                    // खाली फ़ोल्डर होने पर open() फेल हो सकता है, इसलिए उसे सुरक्षित रूप से छोड़ दें
                 }
             }
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
+        } catch (_: Exception) {
         }
+        return count
     }
 
     override fun onResult(hypothesis: String?) {
