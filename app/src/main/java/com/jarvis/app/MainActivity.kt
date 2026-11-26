@@ -1,10 +1,14 @@
 package com.jarvis.app
 
 import android.Manifest
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.AssetManager
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.net.Uri
+import android.os.BatteryManager
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.widget.LinearLayout
@@ -186,7 +190,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                     }
                     count = 1
                 } catch (_: Exception) {
-                    // खाली फ़ोल्डर होने पर open() फेल हो सकता है, इसलिए उसे सुरक्षित रूप से छोड़ दें
                 }
             }
         } catch (_: Exception) {
@@ -194,11 +197,103 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         return count
     }
 
-    override fun onResult(hypothesis: String?) {
-        val spoken = hypothesis?.lowercase(Locale.getDefault()) ?: ""
-        if (spoken.contains("time") || spoken.contains("टाइम") || spoken.contains("समय")) {
-            val currentTime = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
-            val reply = "अभी समय $currentTime हो रहा है।"
+    private fun getTimeInfoText(): String {
+        val currentTime = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+        return "अभी समय $currentTime हो रहा है।"
+    }
+
+    private fun getDateInfoText(): String {
+        val formattedDate = SimpleDateFormat("dd MMMM yyyy", Locale("hi", "IN")).format(Date())
+        return "आज की तारीख़ $formattedDate है।"
+    }
+
+    private fun getDayInfoText(): String {
+        val dayName = SimpleDateFormat("EEEE", Locale("hi", "IN")).format(Date())
+        return "आज $dayName है।"
+    }
+
+    private fun getBatteryInfoText(): String {
+        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+        val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
+            status == BatteryManager.BATTERY_STATUS_FULL
+
+        if (level < 0 || scale <= 0) {
+            return "बैटरी की जानकारी अभी उपलब्ध नहीं है।"
+        }
+        val pct = (level * 100) / scale
+        return if (isCharging) {
+            "बैटरी $pct प्रतिशत है और फ़ोन चार्ज हो रहा है।"
+        } else {
+            "बैटरी बैकअप $pct प्रतिशत बाकी है।"
+        }
+    }
+
+    private fun openAppOrUrl(packageName: String, fallbackUrl: String, label: String): String {
+        return try {
+            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            if (launchIntent != null) {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(launchIntent)
+                "$label खोल रहा हूँ।"
+            } else {
+                val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(webIntent)
+                "$label खोल रहा हूँ।"
+            }
+        } catch (_: Exception) {
+            "$label खोलने में दिक्कत आ रही है।"
+        }
+    }
+
+    private fun extractHeardText(jsonText: String?): String {
+        if (jsonText.isNullOrBlank()) return ""
+        return try {
+            val obj = JSONObject(jsonText)
+            when {
+                obj.has("text") -> obj.optString("text", "")
+                obj.has("partial") -> obj.optString("partial", "")
+                else -> jsonText
+            }
+        } catch (_: Exception) {
+            jsonText
+        }
+    }
+
+    private fun handleVoiceCommand(rawHypothesis: String?) {
+        val spoken = extractHeardText(rawHypothesis).lowercase(Locale.getDefault()).trim()
+        if (spoken.isEmpty()) return
+
+        val reply: String? = when {
+            spoken.contains("battery") || spoken.contains("बैटरी") || spoken.contains("चार्ज") || spoken.contains("charge") -> {
+                getBatteryInfoText()
+            }
+            spoken.contains("youtube") || spoken.contains("यूट्यूब") -> {
+                openAppOrUrl("com.google.android.youtube", "https://www.youtube.com", "YouTube")
+            }
+            spoken.contains("instagram") || spoken.contains("इंस्टाग्राम") || spoken.contains("insta") -> {
+                openAppOrUrl("com.instagram.android", "https://www.instagram.com", "Instagram")
+            }
+            spoken.contains("whatsapp") || spoken.contains("व्हाट्सएप") || spoken.contains("वॉट्सएप") -> {
+                openAppOrUrl("com.whatsapp", "https://www.whatsapp.com", "WhatsApp")
+            }
+            spoken.contains("date") || spoken.contains("तारीख") || spoken.contains("तारीख़") || spoken.contains("tareekh") -> {
+                getDateInfoText()
+            }
+            spoken.contains("day") || spoken.contains("दिन") || spoken.contains("वार") -> {
+                getDayInfoText()
+            }
+            spoken.contains("time") || spoken.contains("टाइम") || spoken.contains("समय") -> {
+                getTimeInfoText()
+            }
+            else -> null
+        }
+
+        if (reply != null) {
             runOnUiThread {
                 statusText.text = reply
             }
@@ -206,7 +301,14 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
-    override fun onFinalResult(hypothesis: String?) {}
+    override fun onResult(hypothesis: String?) {
+        handleVoiceCommand(hypothesis)
+    }
+
+    override fun onFinalResult(hypothesis: String?) {
+        handleVoiceCommand(hypothesis)
+    }
+
     override fun onPartialResult(hypothesis: String?) {}
 
     override fun onError(exception: Exception?) {
