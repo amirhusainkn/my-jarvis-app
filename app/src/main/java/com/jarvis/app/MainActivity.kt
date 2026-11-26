@@ -4,12 +4,14 @@ import android.Manifest
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.content.res.AssetManager
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Bundle
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -42,12 +44,16 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private var mediaPlayer: MediaPlayer? = null
     private var isModelReady: Boolean = false
 
+    private var lastCommandKey: String = ""
+    private var lastCommandTimeMs: Long = 0L
+
     private val elevenLabsApiKey = "YOUR_ELEVENLABS_API_KEY"
     private val elevenLabsVoiceId = "21m00Tcm4TlvDq8ikWAM"
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 1
         private const val SAMPLE_RATE = 16000.0f
+        private const val COOLDOWN_MS = 2200L
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -197,6 +203,21 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         return count
     }
 
+    private fun stopSpeakingImmediately() {
+        runOnUiThread {
+            try {
+                tts?.stop()
+            } catch (_: Exception) {
+            }
+            try {
+                if (mediaPlayer?.isPlaying == true) {
+                    mediaPlayer?.pause()
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     private fun getTimeInfoText(): String {
         val currentTime = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
         return "अभी समय $currentTime हो रहा है।"
@@ -231,23 +252,97 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
-    private fun openAppOrUrl(packageName: String, fallbackUrl: String, label: String): String {
-        return try {
-            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-            if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(launchIntent)
-                "$label खोल रहा हूँ।"
-            } else {
-                val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl)).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-                startActivity(webIntent)
-                "$label खोल रहा हूँ।"
-            }
-        } catch (_: Exception) {
-            "$label खोलने में दिक्कत आ रही है।"
+    private fun openInstalledAppBySpokenName(spoken: String): String? {
+        val cleaned = spoken
+            .replace("open", " ")
+            .replace("launch", " ")
+            .replace("start", " ")
+            .replace("kholo", " ")
+            .replace("khol", " ")
+            .replace("chalu", " ")
+            .replace("करो", " ")
+            .replace("खोलो", " ")
+            .replace("खोल", " ")
+            .replace("ऐप", " ")
+            .replace("app", " ")
+            .trim()
+
+        val tokens = cleaned
+            .split(Regex("[^a-zA-Z0-9\\u0900-\\u097F]+"))
+            .map { it.trim() }
+            .filter { it.length >= 2 }
+
+        if (tokens.isEmpty()) return null
+
+        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
         }
+
+        val activities: List<ResolveInfo> = try {
+            packageManager.queryIntentActivities(mainIntent, 0)
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        var bestMatch: Pair<String, Intent>? = null
+        var bestScore = 0
+
+        for (info in activities) {
+            val label = info.loadLabel(packageManager)?.toString()?.lowercase(Locale.getDefault())?.trim() ?: continue
+            val pkg = info.activityInfo?.packageName ?: continue
+            if (pkg == packageName) continue
+
+            var score = 0
+            for (token in tokens) {
+                if (label == token) {
+                    score += 100
+                } else if (label.contains(token)) {
+                    score += 50
+                } else if (token.contains(label) && label.length >= 3) {
+                    score += 40
+                }
+            }
+
+            if (score > bestScore) {
+                bestScore = score
+                val launchIntent = Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    setClassName(pkg, info.activityInfo.name)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
+                bestMatch = Pair(info.loadLabel(packageManager).toString(), launchIntent)
+            }
+        }
+
+        if (bestMatch != null && bestScore >= 40) {
+            return try {
+                startActivity(bestMatch.second)
+                "${bestMatch.first} खोल रहा हूँ।"
+            } catch (_: Exception) {
+                "${bestMatch.first} खोलने में दिक्कत आई।"
+            }
+        }
+
+        // अगर लिस्ट में न मिले तो प्रमुख ऐप्स का सीधा fallback
+        val directFallbacks = listOf(
+            listOf("youtube", "यूट्यूब") to Pair("YouTube", "com.google.android.youtube"),
+            listOf("instagram", "इंस्टाग्राम", "insta") to Pair("Instagram", "com.instagram.android"),
+            listOf("whatsapp", "व्हाट्सएप", "वॉट्सएप") to Pair("WhatsApp", "com.whatsapp"),
+            listOf("camera", "कैमरा") to Pair("Camera", "com.android.camera")
+        )
+
+        for ((keywords, target) in directFallbacks) {
+            if (keywords.any { spoken.contains(it) }) {
+                val intent = packageManager.getLaunchIntentForPackage(target.second)
+                if (intent != null) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    startActivity(intent)
+                    return "${target.first} खोल रहा हूँ।"
+                }
+            }
+        }
+
+        return null
     }
 
     private fun extractHeardText(jsonText: String?): String {
@@ -264,52 +359,84 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
-    private fun handleVoiceCommand(rawHypothesis: String?) {
-        val spoken = extractHeardText(rawHypothesis).lowercase(Locale.getDefault()).trim()
-        if (spoken.isEmpty()) return
+    private fun canRunCommand(key: String): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (key == lastCommandKey && (now - lastCommandTimeMs) < COOLDOWN_MS) {
+            return false
+        }
+        lastCommandKey = key
+        lastCommandTimeMs = now
+        return true
+    }
 
-        val reply: String? = when {
-            spoken.contains("battery") || spoken.contains("बैटरी") || spoken.contains("चार्ज") || spoken.contains("charge") -> {
-                getBatteryInfoText()
-            }
-            spoken.contains("youtube") || spoken.contains("यूट्यूब") -> {
-                openAppOrUrl("com.google.android.youtube", "https://www.youtube.com", "YouTube")
-            }
-            spoken.contains("instagram") || spoken.contains("इंस्टाग्राम") || spoken.contains("insta") -> {
-                openAppOrUrl("com.instagram.android", "https://www.instagram.com", "Instagram")
-            }
-            spoken.contains("whatsapp") || spoken.contains("व्हाट्सएप") || spoken.contains("वॉट्सएप") -> {
-                openAppOrUrl("com.whatsapp", "https://www.whatsapp.com", "WhatsApp")
-            }
-            spoken.contains("date") || spoken.contains("तारीख") || spoken.contains("तारीख़") || spoken.contains("tareekh") -> {
-                getDateInfoText()
-            }
-            spoken.contains("day") || spoken.contains("दिन") || spoken.contains("वार") -> {
-                getDayInfoText()
-            }
-            spoken.contains("time") || spoken.contains("टाइम") || spoken.contains("समय") -> {
-                getTimeInfoText()
-            }
-            else -> null
+    private fun evaluateUtterance(rawHypothesis: String?): Pair<String, String>? {
+        val spoken = extractHeardText(rawHypothesis).lowercase(Locale.getDefault()).trim()
+        if (spoken.isEmpty()) return null
+
+        if (spoken.contains("stop") || spoken.contains("ruko") || spoken.contains("रुको") || spoken.contains("बंद")) {
+            stopSpeakingImmediately()
+            return Pair("stop", "ठीक है, मैं चुप हो गया। सुन रहा हूँ...")
         }
 
-        if (reply != null) {
-            runOnUiThread {
-                statusText.text = reply
+        val hasTimeWord = spoken.contains("time") || spoken.contains("टाइम") || spoken.contains("समय") || spoken.contains("samay")
+        val hasDateWord = spoken.contains("date") || spoken.contains("tarik") || spoken.contains("tariq") ||
+            spoken.contains("tareekh") || spoken.contains("तारीख") || spoken.contains("तारीख़")
+        val hasDayWord = spoken.contains("day") || spoken.contains("din") || spoken.contains("दिन") || spoken.contains("वार")
+        val hasBatteryWord = spoken.contains("battery") || spoken.contains("बैटरी") ||
+            spoken.contains("charge") || spoken.contains("charging") || spoken.contains("चार्ज")
+
+        val hasOpenIntent = spoken.contains("open") || spoken.contains("launch") || spoken.contains("start") ||
+            spoken.contains("kholo") || spoken.contains("khol") || spoken.contains("खोलो") || spoken.contains("खोल")
+
+        if (hasOpenIntent) {
+            val appReply = openInstalledAppBySpokenName(spoken)
+            if (appReply != null) {
+                return Pair("app_open", appReply)
             }
+        }
+
+        return when {
+            hasBatteryWord -> Pair("battery", getBatteryInfoText())
+            hasDateWord -> Pair("date", getDateInfoText())
+            hasDayWord -> Pair("day", getDayInfoText())
+            hasTimeWord -> Pair("time", getTimeInfoText())
+            else -> {
+                val appReply = openInstalledAppBySpokenName(spoken)
+                if (appReply != null) Pair("app_open", appReply) else null
+            }
+        }
+    }
+
+    private fun handleCompleteSpeech(rawHypothesis: String?) {
+        val matched = evaluateUtterance(rawHypothesis) ?: return
+        if (!canRunCommand(matched.first)) return
+
+        val reply = matched.second
+        runOnUiThread {
+            statusText.text = reply
+        }
+        if (matched.first != "stop") {
             speak(reply, speak = true)
         }
     }
 
+    override fun onPartialResult(hypothesis: String?) {
+        val partial = extractHeardText(hypothesis).trim()
+        if (partial.isNotEmpty()) {
+            // जैसे ही यूज़र बोलना शुरू करे, जार्विस तुरंत चुप हो जाए
+            stopSpeakingImmediately()
+        }
+    }
+
     override fun onResult(hypothesis: String?) {
-        handleVoiceCommand(hypothesis)
+        stopSpeakingImmediately()
+        handleCompleteSpeech(hypothesis)
     }
 
     override fun onFinalResult(hypothesis: String?) {
-        handleVoiceCommand(hypothesis)
+        stopSpeakingImmediately()
+        handleCompleteSpeech(hypothesis)
     }
-
-    override fun onPartialResult(hypothesis: String?) {}
 
     override fun onError(exception: Exception?) {
         runOnUiThread {
