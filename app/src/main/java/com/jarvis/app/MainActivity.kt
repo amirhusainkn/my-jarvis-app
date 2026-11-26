@@ -116,12 +116,10 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         Thread {
             try {
                 val outDir = File(filesDir, "model-en-us")
-                val hasAm = File(outDir, "am").exists()
-                val copied = if (hasAm) {
-                    true
-                } else {
-                    copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
+                if (outDir.exists()) {
+                    outDir.deleteRecursively()
                 }
+                val copied = copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
 
                 if (copied && File(outDir, "am").exists()) {
                     val model = Model(outDir.absolutePath)
