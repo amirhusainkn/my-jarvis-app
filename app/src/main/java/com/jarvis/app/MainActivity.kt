@@ -40,6 +40,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private var tts: TextToSpeech? = null
     private var ttsReady: Boolean = false
     private var startupSpoken: Boolean = false
+    private var activityCreatedAtMs: Long = 0L
 
     private var recognizer: Recognizer? = null
     private var speechService: SpeechService? = null
@@ -61,14 +62,16 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     companion object {
         private const val PERMISSION_REQUEST_CODE = 1
         private const val SAMPLE_RATE = 16000.0f
-        private const val SAME_COMMAND_COOLDOWN_MS = 2200L
-        private const val SAME_TEXT_REPEAT_GUARD_MS = 4500L
-        private const val FAILURE_NOTICE_COOLDOWN_MS = 4000L
-        private const val APP_LAUNCH_DELAY_MS = 1000L
+        private const val STARTUP_IGNORE_WINDOW_MS = 2500L
+        private const val SAME_COMMAND_COOLDOWN_MS = 2500L
+        private const val SAME_TEXT_REPEAT_GUARD_MS = 5000L
+        private const val FAILURE_NOTICE_COOLDOWN_MS = 4500L
+        private const val APP_LAUNCH_DELAY_MS = 1400L
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        activityCreatedAtMs = SystemClock.elapsedRealtime()
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -76,7 +79,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
 
         statusText = TextView(this).apply {
-            text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।"
+            text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (कमांड के लिए 'Jarvis' बोलें)"
             textSize = 15f
         }
 
@@ -173,7 +176,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 speechService = SpeechService(recognizer, SAMPLE_RATE)
                 isModelReady = true
                 runOnUiThread {
-                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। सुन रहा हूँ..."
+                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। 'Jarvis' कहकर कमांड दें..."
                 }
                 speechService?.startListening(this)
             } catch (e: Exception) {
@@ -241,7 +244,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         runOnUiThread {
             statusText.text = reasonText
         }
-        if (forceSpeak) {
+        if (forceSpeak && shouldSpeakOnce(reasonText)) {
             speak(reasonText, speak = true)
         }
     }
@@ -320,12 +323,15 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
 
     private fun scheduleSpeakThenLaunch(label: String, spokenAnnouncement: String, launchAction: () -> Pair<Boolean, String>) {
         pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
+        pendingLaunchRunnable = null
+
         runOnUiThread {
             statusText.text = spokenAnnouncement
         }
         speak(spokenAnnouncement, speak = true)
 
         val runnable = Runnable {
+            pendingLaunchRunnable = null
             val (opened, failReason) = launchAction()
             if (!opened) {
                 val reason = if (failReason.isNotBlank()) {
@@ -341,7 +347,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     }
 
     private fun matchAppToLaunch(spoken: String): Triple<String, String, () -> Pair<Boolean, String>>? {
-        if (spoken.contains("play store") || spoken.contains("playstore") || spoken.contains("प्ले स्टोर") || spoken.contains("प्लेस्टोर") || spoken.contains("store")) {
+        if (spoken.contains("play store") || spoken.contains("playstore") || spoken.contains("प्ले स्टोर") || spoken.contains("प्लेस्टोर")) {
             val label = "Play Store"
             return Triple(
                 label,
@@ -394,7 +400,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         val tokens = cleaned
             .split(Regex("[^a-zA-Z0-9\\u0900-\\u097F]+"))
             .map { it.trim() }
-            .filter { it.length >= 2 }
+            .filter { it.length >= 3 }
 
         if (tokens.isEmpty()) return null
 
@@ -420,10 +426,10 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             for (token in tokens) {
                 if (label == token) {
                     score += 100
-                } else if (label.contains(token)) {
-                    score += 50
-                } else if (token.contains(label) && label.length >= 3) {
-                    score += 40
+                } else if (label.contains(token) && token.length >= 4) {
+                    score += 55
+                } else if (token.contains(label) && label.length >= 4) {
+                    score += 45
                 }
             }
 
@@ -438,7 +444,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             }
         }
 
-        if (bestMatch != null && bestScore >= 40) {
+        if (bestMatch != null && bestScore >= 55) {
             val appTitle = bestMatch.first
             val targetIntent = bestMatch.third
             return Triple(appTitle, "सर, $appTitle खोला जा रहा है।") {
@@ -485,9 +491,22 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     }
 
     private fun evaluateUtterance(rawHypothesis: String?): Pair<String, Any>? {
+        if ((SystemClock.elapsedRealtime() - activityCreatedAtMs) < STARTUP_IGNORE_WINDOW_MS) {
+            return null
+        }
+
         val rawHeard = extractHeardText(rawHypothesis).trim()
         val spoken = rawHeard.lowercase(Locale.getDefault())
         if (spoken.isEmpty()) return null
+
+        val words = spoken.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.isEmpty()) return null
+
+        // पंखे/मोटर/बैकग्राउंड शोर से होने वाली ग़लत पकड़ घटाने के लिए 'Jarvis' ज़रूरी है
+        val hasWakeWord = spoken.contains("jarvis") || spoken.contains("जार्विस")
+        if (!hasWakeWord) {
+            return null
+        }
 
         if (spoken.contains("stop") || spoken.contains("ruko") || spoken.contains("रुको") || spoken.contains("बंद")) {
             stopSpeakingNow()
@@ -514,7 +533,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             }
             return Pair(
                 "unmatched_open",
-                "मैंने \"$rawHeard\" सुना, लेकिन यह ऐप या कमांड पूरा नहीं हो सका क्योंकि नाम सूची या फ़ोन के ऐप्स से मैच नहीं हुआ।"
+                "मैंने \"$rawHeard\" सुना, लेकिन यह ऐप फ़ोन में नहीं मिला या नाम मैच नहीं हुआ।"
             )
         }
 
@@ -523,17 +542,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             hasDateWord -> Pair("date", getDateInfoText())
             hasDayWord -> Pair("day", getDayInfoText())
             hasTimeWord -> Pair("time", getTimeInfoText())
-            else -> {
-                val appTriple = matchAppToLaunch(spoken)
-                if (appTriple != null) {
-                    Pair("app_open", appTriple)
-                } else {
-                    Pair(
-                        "unknown_speech",
-                        "मैंने \"$rawHeard\" सुना, लेकिन यह काम नहीं हो सका क्योंकि यह किसी तय कमांड या ऐप से मेल नहीं खाया।"
-                    )
-                }
-            }
+            else -> null
         }
     }
 
@@ -554,7 +563,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                     scheduleSpeakThenLaunch(appTriple.first, announcement, appTriple.third)
                 }
             }
-            "unmatched_open", "unknown_speech" -> {
+            "unmatched_open" -> {
                 val reason = matched.second as String
                 reportFailureReason(reason, forceSpeak = false)
             }
