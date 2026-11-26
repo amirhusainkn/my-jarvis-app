@@ -11,6 +11,8 @@ import android.media.MediaPlayer
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.widget.LinearLayout
@@ -44,8 +46,14 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private var mediaPlayer: MediaPlayer? = null
     private var isModelReady: Boolean = false
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingLaunchRunnable: Runnable? = null
+
     private var lastCommandKey: String = ""
     private var lastCommandTimeMs: Long = 0L
+    private var lastSpokenText: String = ""
+    private var lastSpokenTimeMs: Long = 0L
+    private var lastFailureReasonTimeMs: Long = 0L
 
     private val elevenLabsApiKey = "YOUR_ELEVENLABS_API_KEY"
     private val elevenLabsVoiceId = "21m00Tcm4TlvDq8ikWAM"
@@ -53,7 +61,10 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     companion object {
         private const val PERMISSION_REQUEST_CODE = 1
         private const val SAMPLE_RATE = 16000.0f
-        private const val COOLDOWN_MS = 2500L
+        private const val SAME_COMMAND_COOLDOWN_MS = 2200L
+        private const val SAME_TEXT_REPEAT_GUARD_MS = 4500L
+        private const val FAILURE_NOTICE_COOLDOWN_MS = 4000L
+        private const val APP_LAUNCH_DELAY_MS = 1000L
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,7 +124,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             initVoskModel()
         } else {
             runOnUiThread {
-                statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (माइक अनुमति दें)"
+                statusText.text = "माइक की अनुमति नहीं मिली, इसलिए मैं सुन नहीं पा रहा हूँ।"
             }
         }
     }
@@ -152,7 +163,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                     val rootAssets = assets.list("")?.joinToString(", ") ?: "खाली"
                     val modelAssets = assets.list("model-en-us")?.joinToString(", ") ?: "नहीं मिला"
                     runOnUiThread {
-                        statusText.text = "एसेट में फ़ाइलें नहीं मिलीं (कॉपी: 0)\nAssets root: $rootAssets\nmodel-en-us: $modelAssets"
+                        statusText.text = "वॉइस मॉडल फ़ाइलें नहीं मिलीं, इसलिए सुनना शुरू नहीं हो सका।\nAssets root: $rootAssets\nmodel-en-us: $modelAssets"
                     }
                     return@Thread
                 }
@@ -169,7 +180,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 val info = inspectModelDir(outDir)
                 val traceLines = e.stackTraceToString().lines().take(4).joinToString("\n")
                 runOnUiThread {
-                    statusText.text = "एरर: ${e.message}\nकॉपी हुई फ़ाइलें: $copiedCount\n\n$info\n\n$traceLines"
+                    statusText.text = "मॉडल लोड नहीं हो सका—वजह: ${e.message}\nकॉपी हुई फ़ाइलें: $copiedCount\n\n$info\n\n$traceLines"
                 }
             }
         }.start()
@@ -204,6 +215,8 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     }
 
     private fun stopSpeakingNow() {
+        pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
+        pendingLaunchRunnable = null
         runOnUiThread {
             try {
                 tts?.stop()
@@ -215,6 +228,21 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 }
             } catch (_: Exception) {
             }
+        }
+    }
+
+    private fun reportFailureReason(reasonText: String, forceSpeak: Boolean = true) {
+        val now = SystemClock.elapsedRealtime()
+        if (!forceSpeak && (now - lastFailureReasonTimeMs) < FAILURE_NOTICE_COOLDOWN_MS) {
+            runOnUiThread { statusText.text = reasonText }
+            return
+        }
+        lastFailureReasonTimeMs = now
+        runOnUiThread {
+            statusText.text = reasonText
+        }
+        if (forceSpeak) {
+            speak(reasonText, speak = true)
         }
     }
 
@@ -242,7 +270,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             status == BatteryManager.BATTERY_STATUS_FULL
 
         if (level < 0 || scale <= 0) {
-            return "बैटरी की जानकारी अभी उपलब्ध नहीं है।"
+            return "बैटरी की जानकारी नहीं मिल सकी, क्योंकि सिस्टम ने बैटरी लेवल नहीं दिया।"
         }
         val pct = (level * 100) / scale
         return if (isCharging) {
@@ -252,34 +280,98 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
-    private fun launchTargetApp(packageName: String, fallbackUrl: String, label: String): String {
-        return try {
-            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-            if (launchIntent != null) {
-                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(launchIntent)
-                "$label खोल रहा हूँ।"
-            } else {
-                val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl)).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    private fun buildPackageLaunchAction(packageName: String, fallbackUrl: String, label: String): () -> Pair<Boolean, String> {
+        return {
+            try {
+                val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+                if (launchIntent != null) {
+                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    startActivity(launchIntent)
+                    Pair(true, "")
+                } else {
+                    val mainCategoryIntent = Intent(Intent.ACTION_MAIN).apply {
+                        addCategory(Intent.CATEGORY_LAUNCHER)
+                        setPackage(packageName)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    val resolved = packageManager.queryIntentActivities(mainCategoryIntent, 0)
+                    if (resolved.isNotEmpty()) {
+                        val first = resolved[0].activityInfo
+                        mainCategoryIntent.setClassName(first.packageName, first.name)
+                        startActivity(mainCategoryIntent)
+                        Pair(true, "")
+                    } else if (fallbackUrl.isNotBlank()) {
+                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl)).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(webIntent)
+                        Pair(true, "")
+                    } else {
+                        Pair(false, "$label नहीं खुल सका, क्योंकि यह ऐप फ़ोन में नहीं मिला या लॉन्च इंटेंट उपलब्ध नहीं है।")
+                    }
                 }
-                startActivity(webIntent)
-                "$label खोल रहा हूँ।"
+            } catch (e: SecurityException) {
+                Pair(false, "$label नहीं खुल सका, क्योंकि Android सुरक्षा या अनुमति ने इसे रोका है। (${e.message ?: "SecurityException"})")
+            } catch (e: Exception) {
+                Pair(false, "$label नहीं खुल सका, वजह यह है: ${e.message ?: "लॉन्च त्रुटि"}।")
             }
-        } catch (_: Exception) {
-            "$label खोलने में दिक्कत आई।"
         }
     }
 
-    private fun openInstalledAppBySpokenName(spoken: String): String? {
-        if (spoken.contains("youtube") || spoken.contains("यूट्यूब")) {
-            return launchTargetApp("com.google.android.youtube", "https://www.youtube.com", "YouTube")
+    private fun scheduleSpeakThenLaunch(label: String, spokenAnnouncement: String, launchAction: () -> Pair<Boolean, String>) {
+        pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
+        runOnUiThread {
+            statusText.text = spokenAnnouncement
+        }
+        speak(spokenAnnouncement, speak = true)
+
+        val runnable = Runnable {
+            val (opened, failReason) = launchAction()
+            if (!opened) {
+                val reason = if (failReason.isNotBlank()) {
+                    failReason
+                } else {
+                    "$label नहीं खुल सका, क्योंकि ऐप लॉन्च नहीं हो पाया।"
+                }
+                reportFailureReason(reason, forceSpeak = true)
+            }
+        }
+        pendingLaunchRunnable = runnable
+        mainHandler.postDelayed(runnable, APP_LAUNCH_DELAY_MS)
+    }
+
+    private fun matchAppToLaunch(spoken: String): Triple<String, String, () -> Pair<Boolean, String>>? {
+        if (spoken.contains("play store") || spoken.contains("playstore") || spoken.contains("प्ले स्टोर") || spoken.contains("प्लेस्टोर") || spoken.contains("store")) {
+            val label = "Play Store"
+            return Triple(
+                label,
+                "सर, $label खोला जा रहा है।",
+                buildPackageLaunchAction("com.android.vending", "https://play.google.com/store", label)
+            )
+        }
+        if (spoken.contains("whatsapp") || spoken.contains("व्हाट्सएप") || spoken.contains("वॉट्सएप") || spoken.contains("what's up")) {
+            val label = "WhatsApp"
+            return Triple(
+                label,
+                "सर, $label खोला जा रहा है।",
+                buildPackageLaunchAction("com.whatsapp", "https://www.whatsapp.com", label)
+            )
+        }
+        if (spoken.contains("youtube") || spoken.contains("यूट्यूब") || spoken.contains("you tube")) {
+            val label = "YouTube"
+            return Triple(
+                label,
+                "सर, $label खोला जा रहा है।",
+                buildPackageLaunchAction("com.google.android.youtube", "https://www.youtube.com", label)
+            )
         }
         if (spoken.contains("instagram") || spoken.contains("इंस्टाग्राम") || spoken.contains("insta")) {
-            return launchTargetApp("com.instagram.android", "https://www.instagram.com", "Instagram")
-        }
-        if (spoken.contains("whatsapp") || spoken.contains("व्हाट्सएप") || spoken.contains("वॉट्सएप")) {
-            return launchTargetApp("com.whatsapp", "https://www.whatsapp.com", "WhatsApp")
+            val label = "Instagram"
+            return Triple(
+                label,
+                "सर, $label खोला जा रहा है।",
+                buildPackageLaunchAction("com.instagram.android", "https://www.instagram.com", label)
+            )
         }
 
         val cleaned = spoken
@@ -316,7 +408,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             emptyList()
         }
 
-        var bestMatch: Pair<String, Intent>? = null
+        var bestMatch: Triple<String, String, Intent>? = null
         var bestScore = 0
 
         for (info in activities) {
@@ -340,18 +432,22 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 val launchIntent = Intent(Intent.ACTION_MAIN).apply {
                     addCategory(Intent.CATEGORY_LAUNCHER)
                     setClassName(pkg, info.activityInfo.name)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
-                bestMatch = Pair(info.loadLabel(packageManager).toString(), launchIntent)
+                bestMatch = Triple(info.loadLabel(packageManager).toString(), pkg, launchIntent)
             }
         }
 
         if (bestMatch != null && bestScore >= 40) {
-            return try {
-                startActivity(bestMatch.second)
-                "${bestMatch.first} खोल रहा हूँ।"
-            } catch (_: Exception) {
-                "${bestMatch.first} खोलने में दिक्कत आई।"
+            val appTitle = bestMatch.first
+            val targetIntent = bestMatch.third
+            return Triple(appTitle, "सर, $appTitle खोला जा रहा है।") {
+                try {
+                    startActivity(targetIntent)
+                    Pair(true, "")
+                } catch (e: Exception) {
+                    Pair(false, "$appTitle नहीं खुल सका, वजह यह है: ${e.message ?: "लॉन्च त्रुटि"}।")
+                }
             }
         }
 
@@ -370,7 +466,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
 
     private fun canRunCommand(key: String): Boolean {
         val now = SystemClock.elapsedRealtime()
-        if (key == lastCommandKey && (now - lastCommandTimeMs) < COOLDOWN_MS) {
+        if (key == lastCommandKey && (now - lastCommandTimeMs) < SAME_COMMAND_COOLDOWN_MS) {
             return false
         }
         lastCommandKey = key
@@ -378,8 +474,19 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         return true
     }
 
-    private fun evaluateUtterance(rawHypothesis: String?): Pair<String, String>? {
-        val spoken = extractHeardText(rawHypothesis).lowercase(Locale.getDefault()).trim()
+    private fun shouldSpeakOnce(replyText: String): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (replyText == lastSpokenText && (now - lastSpokenTimeMs) < SAME_TEXT_REPEAT_GUARD_MS) {
+            return false
+        }
+        lastSpokenText = replyText
+        lastSpokenTimeMs = now
+        return true
+    }
+
+    private fun evaluateUtterance(rawHypothesis: String?): Pair<String, Any>? {
+        val rawHeard = extractHeardText(rawHypothesis).trim()
+        val spoken = rawHeard.lowercase(Locale.getDefault())
         if (spoken.isEmpty()) return null
 
         if (spoken.contains("stop") || spoken.contains("ruko") || spoken.contains("रुको") || spoken.contains("बंद")) {
@@ -390,8 +497,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         val hasTimeWord = spoken.contains("time") || spoken.contains("टाइम") || spoken.contains("समय") ||
             spoken.contains("samay") || spoken.contains("waqt") || spoken.contains("वक्त")
         val hasDateWord = spoken.contains("date") || spoken.contains("tarik") || spoken.contains("tariq") ||
-            spoken.contains("tareekh") || spoken.contains("तारीख") || spoken.contains("तारीख़") ||
-            spoken.contains("aaj ki") || spoken.contains("आज की")
+            spoken.contains("tareekh") || spoken.contains("तारीख") || spoken.contains("तारीख़")
         val hasDayWord = spoken.contains("day") || spoken.contains("din") || spoken.contains("दिन") ||
             spoken.contains("war") || spoken.contains("vaar") || spoken.contains("वार")
         val hasBatteryWord = spoken.contains("battery") || spoken.contains("बैटरी") ||
@@ -402,10 +508,14 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             spoken.contains("खोल") || spoken.contains("chalu") || spoken.contains("चालू")
 
         if (hasOpenIntent) {
-            val appReply = openInstalledAppBySpokenName(spoken)
-            if (appReply != null) {
-                return Pair("app_open", appReply)
+            val appTriple = matchAppToLaunch(spoken)
+            if (appTriple != null) {
+                return Pair("app_open", appTriple)
             }
+            return Pair(
+                "unmatched_open",
+                "मैंने \"$rawHeard\" सुना, लेकिन यह ऐप या कमांड पूरा नहीं हो सका क्योंकि नाम सूची या फ़ोन के ऐप्स से मैच नहीं हुआ।"
+            )
         }
 
         return when {
@@ -414,8 +524,15 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             hasDayWord -> Pair("day", getDayInfoText())
             hasTimeWord -> Pair("time", getTimeInfoText())
             else -> {
-                val appReply = openInstalledAppBySpokenName(spoken)
-                if (appReply != null) Pair("app_open", appReply) else null
+                val appTriple = matchAppToLaunch(spoken)
+                if (appTriple != null) {
+                    Pair("app_open", appTriple)
+                } else {
+                    Pair(
+                        "unknown_speech",
+                        "मैंने \"$rawHeard\" सुना, लेकिन यह काम नहीं हो सका क्योंकि यह किसी तय कमांड या ऐप से मेल नहीं खाया।"
+                    )
+                }
             }
         }
     }
@@ -424,18 +541,36 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         val matched = evaluateUtterance(rawHypothesis) ?: return
         if (!canRunCommand(matched.first)) return
 
-        val reply = matched.second
-        runOnUiThread {
-            statusText.text = reply
-        }
-        if (matched.first != "stop") {
-            speak(reply, speak = true)
+        when (matched.first) {
+            "stop" -> {
+                val msg = matched.second as String
+                runOnUiThread { statusText.text = msg }
+            }
+            "app_open" -> {
+                @Suppress("UNCHECKED_CAST")
+                val appTriple = matched.second as Triple<String, String, () -> Pair<Boolean, String>>
+                val announcement = appTriple.second
+                if (shouldSpeakOnce(announcement)) {
+                    scheduleSpeakThenLaunch(appTriple.first, announcement, appTriple.third)
+                }
+            }
+            "unmatched_open", "unknown_speech" -> {
+                val reason = matched.second as String
+                reportFailureReason(reason, forceSpeak = false)
+            }
+            else -> {
+                val reply = matched.second as String
+                runOnUiThread {
+                    statusText.text = reply
+                }
+                if (shouldSpeakOnce(reply)) {
+                    speak(reply, speak = true)
+                }
+            }
         }
     }
 
-    override fun onPartialResult(hypothesis: String?) {
-        // अपनी ही आवाज़ पर खुद को चुप कराने से लूप बन रहा था, इसलिए यहाँ नहीं रोकते
-    }
+    override fun onPartialResult(hypothesis: String?) {}
 
     override fun onResult(hypothesis: String?) {
         handleCompleteSpeech(hypothesis)
@@ -446,9 +581,8 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     }
 
     override fun onError(exception: Exception?) {
-        runOnUiThread {
-            statusText.text = "सुनने में दिक्कत: ${exception?.message}"
-        }
+        val msg = "सुनने का काम रुक गया—वजह: ${exception?.message ?: "माइक या रिकॉग्नाइज़र त्रुटि"}"
+        reportFailureReason(msg, forceSpeak = true)
     }
 
     override fun onTimeout() {
@@ -539,6 +673,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     }
 
     override fun onDestroy() {
+        pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
         speechService?.stop()
         speechService?.shutdown()
         recognizer?.close()
