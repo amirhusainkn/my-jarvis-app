@@ -115,13 +115,13 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         Thread {
             try {
                 val outDir = File(filesDir, "model-en-us")
-                val copied = if (File(outDir, "uuid").exists()) {
+                val copied = if (File(outDir, "am").exists()) {
                     true
                 } else {
                     copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
                 }
 
-                if (copied && File(outDir, "uuid").exists()) {
+                if (copied && File(outDir, "am").exists()) {
                     val model = Model(outDir.absolutePath)
                     recognizer = Recognizer(model, 8000.0f)
                     speechService = SpeechService(recognizer, 8000.0f)
@@ -132,7 +132,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                     speechService?.startListening(this)
                 } else {
                     runOnUiThread {
-                        statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (assets/model-en-us में uuid नहीं मिला)"
+                        statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (assets/model-en-us में am फ़ोल्डर नहीं मिला)"
                     }
                 }
             } catch (e: Exception) {
