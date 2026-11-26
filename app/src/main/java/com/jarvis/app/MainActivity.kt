@@ -2,6 +2,7 @@ package com.jarvis.app
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.res.AssetManager
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Bundle
@@ -16,7 +17,6 @@ import org.vosk.Model
 import org.vosk.Recognizer
 import org.vosk.android.RecognitionListener
 import org.vosk.android.SpeechService
-import org.vosk.android.StorageService
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -112,9 +112,17 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     }
 
     private fun initVoskModel() {
-        StorageService.unpack(this, "model-en-us", "model-en-us",
-            { model: Model ->
-                try {
+        Thread {
+            try {
+                val outDir = File(filesDir, "model-en-us")
+                val copied = if (File(outDir, "uuid").exists()) {
+                    true
+                } else {
+                    copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
+                }
+
+                if (copied && File(outDir, "uuid").exists()) {
+                    val model = Model(outDir.absolutePath)
                     recognizer = Recognizer(model, 8000.0f)
                     speechService = SpeechService(recognizer, 8000.0f)
                     isModelReady = true
@@ -122,18 +130,41 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                         statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। सुन रहा हूँ..."
                     }
                     speechService?.startListening(this)
-                } catch (e: Exception) {
+                } else {
                     runOnUiThread {
-                        statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (मॉडल एरर: ${e.message})"
+                        statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (assets/model-en-us में uuid नहीं मिला)"
                     }
                 }
-            },
-            { exception ->
+            } catch (e: Exception) {
                 runOnUiThread {
-                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (मॉडल अनपैक नहीं हो सका: ${exception.message})"
+                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (मॉडल एरर: ${e.message})"
                 }
             }
-        )
+        }.start()
+    }
+
+    private fun copyAssetFolder(assetManager: AssetManager, fromAssetPath: String, toPath: String): Boolean {
+        return try {
+            val files = assetManager.list(fromAssetPath) ?: return false
+            val targetDir = File(toPath)
+            if (!targetDir.exists()) targetDir.mkdirs()
+
+            if (files.isEmpty()) {
+                assetManager.open(fromAssetPath).use { input ->
+                    FileOutputStream(toPath).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            } else {
+                for (file in files) {
+                    copyAssetFolder(assetManager, "$fromAssetPath/$file", "$toPath/$file")
+                }
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
     }
 
     override fun onResult(hypothesis: String?) {
