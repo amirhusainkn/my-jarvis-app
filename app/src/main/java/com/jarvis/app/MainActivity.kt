@@ -1,4 +1,5 @@
 package com.jarvis.app
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.content.res.AssetManager
@@ -44,6 +45,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 1
+        private const val SAMPLE_RATE = 16000.0f
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -110,35 +112,21 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
-    private fun findModelRoot(dir: File): File? {
-        if (!dir.exists() || !dir.isDirectory) return null
-        if (File(dir, "am").exists() && File(dir, "conf").exists()) {
-            return dir
-        }
-        val children = dir.listFiles() ?: return null
-        for (child in children) {
-            if (child.isDirectory) {
-                val found = findModelRoot(child)
-                if (found != null) return found
-            }
-        }
-        return null
-    }
-
     private fun initVoskModel() {
         Thread {
             try {
                 val outDir = File(filesDir, "model-en-us")
-                if (outDir.exists()) {
-                    outDir.deleteRecursively()
+                val hasAm = File(outDir, "am").exists()
+                val copied = if (hasAm) {
+                    true
+                } else {
+                    copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
                 }
-                val copied = copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
-                val modelRoot = if (copied) findModelRoot(outDir) else null
 
-                if (modelRoot != null) {
-                    val model = Model(modelRoot.absolutePath)
-                    recognizer = Recognizer(model, 8000.0f)
-                    speechService = SpeechService(recognizer, 8000.0f)
+                if (copied && File(outDir, "am").exists()) {
+                    val model = Model(outDir.absolutePath)
+                    recognizer = Recognizer(model, SAMPLE_RATE)
+                    speechService = SpeechService(recognizer, SAMPLE_RATE)
                     isModelReady = true
                     runOnUiThread {
                         statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। सुन रहा हूँ..."
