@@ -56,7 +56,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
 
         statusText = TextView(this).apply {
             text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।"
-            textSize = 16f
+            textSize = 15f
         }
 
         layout.addView(statusText)
@@ -108,36 +108,56 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
+    private fun inspectModelDir(dir: File): String {
+        if (!dir.exists()) return "डायरेक्टरी मौजूद नहीं है"
+        val details = mutableListOf<String>()
+        for (sub in listOf("am", "conf", "graph", "ivector")) {
+            val subDir = File(dir, sub)
+            if (!subDir.exists()) {
+                details.add("$sub: गायब")
+            } else {
+                val files = subDir.listFiles()
+                if (files == null || files.isEmpty()) {
+                    details.add("$sub: खाली (0 फ़ाइल)")
+                } else {
+                    val summary = files.joinToString(", ") { "${it.name}(${it.length()}B)" }
+                    details.add("$sub: $summary")
+                }
+            }
+        }
+        return details.joinToString("\n")
+    }
+
     private fun initVoskModel() {
         Thread {
+            val outDir = File(filesDir, "model-en-us")
             try {
-                val outDir = File(filesDir, "model-en-us")
                 if (outDir.exists()) {
                     outDir.deleteRecursively()
                 }
                 val copied = copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
 
-                if (copied && File(outDir, "am").exists()) {
-                    val model = Model(outDir.absolutePath)
-                    recognizer = Recognizer(model, SAMPLE_RATE)
-                    speechService = SpeechService(recognizer, SAMPLE_RATE)
-                    isModelReady = true
+                if (!copied) {
+                    val info = inspectModelDir(outDir)
                     runOnUiThread {
-                        statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। सुन रहा हूँ..."
+                        statusText.text = "कॉपी पूरा नहीं हुआ:\n$info"
                     }
-                    speechService?.startListening(this)
-                } else {
-                    val foundItems = outDir.listFiles()?.joinToString(", ") { it.name } ?: "कुछ नहीं"
-                    runOnUiThread {
-                        statusText.text = "मॉडल फ़ोल्डर अधूरा: $foundItems"
-                    }
+                    return@Thread
                 }
-            } catch (e: Exception) {
-                val outDir = File(filesDir, "model-en-us")
-                val foundItems = outDir.listFiles()?.joinToString(", ") { it.name } ?: "कुछ नहीं"
-                val traceLines = e.stackTraceToString().lines().take(5).joinToString("\n")
+
+                val model = Model(outDir.absolutePath)
+                recognizer = Recognizer(model, SAMPLE_RATE)
+                speechService = SpeechService(recognizer, SAMPLE_RATE)
+                isModelReady = true
                 runOnUiThread {
-                    statusText.text = "एरर: ${e.message}\nमिला: $foundItems\n\n$traceLines"
+                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। सुन रहा हूँ..."
+                }
+                speechService?.startListening(this)
+            } catch (e: Exception) {
+                val info = inspectModelDir(outDir)
+                val traceLines = e.stackTraceToString().lines().take(4).joinToString("\n")
+                runOnUiThread {
+                    statusText.text = "एरर: ${e.message}\n\nफ़ाइल जाँच:\n$info\n\n$traceLines"
                 }
             }
         }.start()
@@ -147,7 +167,9 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         return try {
             val files = assetManager.list(fromAssetPath) ?: return false
             val targetDir = File(toPath)
-            if (!targetDir.exists()) targetDir.mkdirs()
+            if (!targetDir.exists() && !targetDir.mkdirs()) {
+                return false
+            }
 
             if (files.isEmpty()) {
                 assetManager.open(fromAssetPath).use { input ->
@@ -157,7 +179,8 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 }
             } else {
                 for (file in files) {
-                    copyAssetFolder(assetManager, "$fromAssetPath/$file", "$toPath/$file")
+                    val ok = copyAssetFolder(assetManager, "$fromAssetPath/$file", "$toPath/$file")
+                    if (!ok) return false
                 }
             }
             true
