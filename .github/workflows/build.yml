@@ -2,12 +2,12 @@ name: Build Android APK (Gradle)
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -16,19 +16,15 @@ jobs:
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
           java-version: '17'
+          distribution: 'temurin'
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.4'
 
       - name: Write Clean AndroidManifest
         run: |
-          mkdir -p app/src/main
           cat << 'EOF' > app/src/main/AndroidManifest.xml
-          <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -49,22 +45,28 @@ jobs:
 
       - name: Download Vosk Model Automatically
         run: |
-          mkdir -p app/src/main/assets
-          rm -rf app/src/main/assets/model-en-us vosk-model-small-en-in-0.4 model.zip
-          echo "Downloading Indian English Vosk model..."
-          curl -L -o model.zip "https://alphacephei.com/vosk/models/vosk-model-small-en-in-0.4.zip"
-          echo "Extracting model..."
-          unzip -q model.zip
-          mv vosk-model-small-en-in-0.4 app/src/main/assets/model-en-us
-          rm -f model.zip
+          rm -rf app/src/main/assets/model-en-us
+          mkdir -p app/src/main/assets/model-en-us
+          echo "Downloading US English Vosk model..."
+          curl -L -sS --fail "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip" -o model.zip
+          unzip -q model.zip -d temp_model
+          INNER_DIR=$(find temp_model -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          if [ -n "$INNER_DIR" ]; then
+            mv "$INNER_DIR"/* app/src/main/assets/model-en-us/
+          else
+            mv temp_model/* app/src/main/assets/model-en-us/
+          fi
+          rm -rf model.zip temp_model
           ls -la app/src/main/assets/model-en-us
+          test -d app/src/main/assets/model-en-us/am
           echo "Model setup complete!"
 
       - name: Build Debug APK with Gradle
-        run: gradle assembleDebug
+        run: ./gradlew assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
+          name: app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+          
