@@ -1,4 +1,4 @@
-package com.dhanouriworld.jarvis
+package com.jarvis.app
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -30,8 +30,8 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     companion object {
         private const val LOCATION_PERM_CODE = 101
         private const val DISTANCE_THRESHOLD_METERS = 500.0
-        private const val SYNC_CYCLE_MS = 12L * 60L * 60L * 1000L // 12 घंटे का संतुलित चक्र
-        private const val FIVE_MIN_MS = 5L * 60L * 1000L          // 5 मिनट का सुरक्षित अंतराल
+        private const val SYNC_CYCLE_MS = 12L * 60L * 60L * 1000L
+        private const val FIVE_MIN_MS = 5L * 60L * 1000L
         private const val PREFS_NAME = "jarvis_local_prefs"
         private const val KEY_HOME_LAT = "home_lat"
         private const val KEY_HOME_LON = "home_lon"
@@ -63,17 +63,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         val btnAsk: Button = findViewById(R.id.btnAsk)
         val btnVisitSummary: Button = findViewById(R.id.btnVisitSummary)
 
-        // घर (जैसे जसौली) को एक बार मार्क करें ताकि बार-बार घर की फ़ालतू एंट्री न हो
         btnMarkHome.setOnClickListener {
             markCurrentLocationAsHome()
         }
 
-        // फ़ोन एक्टिव/ऑन रहते हुए 500 मीटर दूरी जाँचें (ऑफ़लाइन दूरी पहचान + नेटवर्क/अनुमति के साथ सेव)
         btnCheck500m.setOnClickListener {
             check500MeterRule()
         }
 
-        // सवाल/बात भेजें: ऑफ़लाइन लोकल SQLite से ढूँढें या ऑनलाइन में नई/गैर-डुप्लिकेट बात सीखें
         btnAsk.setOnClickListener {
             val userText = etInput.text.toString().trim()
             if (userText.isNotEmpty()) {
@@ -82,7 +79,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             }
         }
 
-        // विज़िट गिनती देखें (कितनी बार और कब-कब गए)
         btnVisitSummary.setOnClickListener {
             val summary = dbHelper.getVisitsSummary()
             showAndSpeak(summary)
@@ -149,7 +145,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         }
     }
 
-    // 1. घर (जसौली) को मार्क करना ताकि घर में रहते हुए बार-बार फ़ालतू एंट्री न बने
     private fun markCurrentLocationAsHome() {
         val loc = getCurrentLocation()
         if (loc == null) {
@@ -182,13 +177,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return results[0] <= DISTANCE_THRESHOLD_METERS
     }
 
-    // 2. फ़ोन एक्टिव/ऑन रहते हुए 500 मीटर दूरी की जाँच (ऑफ़लाइन) -> फिर नेटवर्क व अनुमति के साथ सेव
     private fun check500MeterRule() {
         val now = System.currentTimeMillis()
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val lastCheckTime = prefs.getLong(KEY_LAST_CHECK_TIME, 0L)
 
-        // फ़ालतू बार-बार लूप से बचाव (कम से कम 5 मिनट का संतुलन)
         if (lastCheckTime > 0L && (now - lastCheckTime) < FIVE_MIN_MS) {
             val remainingSec = ((FIVE_MIN_MS - (now - lastCheckTime)) / 1000L)
             showAndSpeak("बैटरी और रफ़्तार बचाने के लिए अभी 5 मिनट का अंतराल बाकी है ($remainingSec सेकंड)।")
@@ -203,7 +196,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
         prefs.edit().putLong(KEY_LAST_CHECK_TIME, now).apply()
 
-        // अगर आप घर के 500 मीटर के दायरे में हैं, तो घर की फ़ालतू विज़िट एंट्री नहीं जोड़ेंगे
         if (isNearHome(loc.latitude, loc.longitude)) {
             showAndSpeak("आप घर के दायरे में हैं। यहाँ बार-बार घर की एंट्री सेव नहीं की जाएगी।")
             return
@@ -232,7 +224,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
-        // 500 मीटर की दूरी पूरी हो चुकी है — अब अनुमति और नेटवर्क के लिए पूछें
         promptFor500mSave(loc.latitude, loc.longitude, movedMeters.toInt())
     }
 
@@ -293,7 +284,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
         return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    // 3. ऑफ़लाइन SQLite से जवाब या ऑनलाइन Gemini से सीखना (बिना हूबहू डुप्लिकेट के)
     private fun handleUserQuery(userText: String) {
         val cleanText = userText.trim()
         if (cleanText.length < 2) {
@@ -301,7 +291,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
-        // पहले लोकल SQLite में खोजें (ऑफ़लाइन या तेज़ लोकल पकड़)
         val localMatch = dbHelper.findBestLocalMatch(cleanText)
         if (!isNetworkAvailable()) {
             if (localMatch != null) {
@@ -312,13 +301,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
-        // ऑनलाइन होने पर 12 घंटे चक्र / नई बात के हिसाब से सीखने की प्रक्रिया
         val now = System.currentTimeMillis()
         val lastSync = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getLong(KEY_LAST_SYNC_TIME, 0L)
         val within12hCycle = (now - lastSync) < SYNC_CYCLE_MS
 
-        // यहाँ वास्तविक Gemini API कॉल जोड़ी जाएगी; अभी संरचित जवाब तैयार करने का स्थान:
         val instructorReply = fetchInstructorResponsePlaceholder(cleanText)
 
         if (!isValidCleanText(instructorReply)) {
@@ -326,13 +313,11 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             return
         }
 
-        // हूबहू डुप्लिकेट जाँच: अगर बिल्कुल वही सवाल/जवाब पहले से है, तो दोबारा सेव न करें
         if (dbHelper.isExactDuplicate(cleanText, instructorReply)) {
             showAndSpeak("$instructorReply (यह बिल्कुल वैसी ही बात पहले से सेव है, डुप्लिकेट नहीं जोड़ा गया।)")
             return
         }
 
-        // अगर कहने का अंदाज़/लफ़्ज़ नया है, तो लोकल SQLite में सेव करें
         dbHelper.insertLearnedItem(cleanText, instructorReply, now)
         if (!within12hCycle) {
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -343,8 +328,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun fetchInstructorResponsePlaceholder(query: String): String {
-        // नोट: यहाँ आपकी Gemini API Key और HTTP/SDK कॉल आएगी।
-        // जब तक API की नहीं जुड़ती, यह सुरक्षित फ़ॉलबैक है ताकि कुछ गलत-सलत सेव न हो।
         return "मैंने आपकी बात '$query' समझ ली है। (Gemini API की जोड़ने पर यह यहाँ से ताज़ा जवाब लाएगा।)"
     }
 
@@ -361,7 +344,6 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     }
 }
 
-// 4. लोकल SQLite डेटाबेस (सिर्फ़ आपके फ़ोन के अंदर, प्राइवेट और ऑफ़लाइन)
 class JarvisDatabaseHelper(context: Context) :
     SQLiteOpenHelper(context, "jarvis_local.db", null, 1) {
 
@@ -502,7 +484,6 @@ class JarvisDatabaseHelper(context: Context) :
                 val denom = max(1, min(queryTokens.size, keyTokens.size)).toDouble()
                 val score = overlap / denom
 
-                // सख़्त मिलान (कम से कम 60% शब्द मेल खाएँ) ताकि गलत चीज़ न उठे
                 if (score >= 0.6 && score > bestScore) {
                     bestScore = score
                     bestResponse = resp
