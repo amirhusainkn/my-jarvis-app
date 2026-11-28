@@ -108,6 +108,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_CODE)
         } else {
             initVoskModel()
+        }
     }
 
     private fun initOfflineTts() {
@@ -745,5 +746,4 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             onCreate(db)
         }
     }
-}
 }
