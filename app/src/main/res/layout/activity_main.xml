@@ -2,7 +2,7 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="16dp">
+    android:padding="20dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -13,49 +13,25 @@
             android:id="@+id/tvStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Jarvis Ready"
-            android:textSize="18sp"
+            android:text="Marco is listening..."
+            android:textSize="20sp"
             android:textStyle="bold"
-            android:paddingBottom="12dp" />
+            android:paddingBottom="14dp" />
 
-        <EditText
-            android:id="@+id/etCommand"
+        <TextView
+            android:id="@+id/tvHeard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="यहाँ लिखें या बोलें..."
-            android:inputType="text"
-            android:padding="12dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingTop="10dp">
-
-            <Button
-                android:id="@+id/btnSend"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="भेजें" />
-
-            <Button
-                android:id="@+id/btnMarkHome"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginStart="8dp"
-                android:text="घर मार्क करें" />
-        </LinearLayout>
+            android:text="सुनी गई बात यहाँ दिखेगी..."
+            android:textSize="15sp"
+            android:paddingBottom="14dp" />
 
         <TextView
             android:id="@+id/tvOutput"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text=""
-            android:textSize="15sp"
-            android:paddingTop="14dp" />
+            android:text="Marco तैयार है। बोलें: 'Marco, save this place' या 'मार्को, यह घर मार्क करो'।"
+            android:textSize="16sp" />
 
     </LinearLayout>
 </ScrollView>
-
