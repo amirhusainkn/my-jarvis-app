@@ -15,6 +15,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -47,6 +48,10 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private var mediaPlayer: MediaPlayer? = null
     private var isModelReady: Boolean = false
 
+    @Volatile
+    private var isAssistantSpeaking: Boolean = false
+    private var lastPlaybackEndTimeMs: Long = 0L
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingLaunchRunnable: Runnable? = null
 
@@ -55,6 +60,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private var lastSpokenText: String = ""
     private var lastSpokenTimeMs: Long = 0L
     private var lastFailureReasonTimeMs: Long = 0L
+    private var lastHeardPreview: String = ""
 
     private val elevenLabsApiKey = "YOUR_ELEVENLABS_API_KEY"
     private val elevenLabsVoiceId = "21m00Tcm4TlvDq8ikWAM"
@@ -62,9 +68,10 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     companion object {
         private const val PERMISSION_REQUEST_CODE = 1
         private const val SAMPLE_RATE = 16000.0f
-        private const val STARTUP_IGNORE_WINDOW_MS = 2500L
-        private const val SAME_COMMAND_COOLDOWN_MS = 2500L
-        private const val SAME_TEXT_REPEAT_GUARD_MS = 5000L
+        private const val STARTUP_IGNORE_WINDOW_MS = 1800L
+        private const val POST_PLAYBACK_GUARD_MS = 700L
+        private const val SAME_COMMAND_COOLDOWN_MS = 2000L
+        private const val SAME_TEXT_REPEAT_GUARD_MS = 4000L
         private const val FAILURE_NOTICE_COOLDOWN_MS = 4500L
         private const val APP_LAUNCH_DELAY_MS = 1400L
     }
@@ -79,7 +86,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
 
         statusText = TextView(this).apply {
-            text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (कमांड के लिए 'Jarvis' बोलें)"
+            text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।"
             textSize = 15f
         }
 
@@ -95,6 +102,40 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
+    private fun markPlaybackStarted() {
+        isAssistantSpeaking = true
+    }
+
+    private fun markPlaybackEnded() {
+        isAssistantSpeaking = false
+        lastPlaybackEndTimeMs = SystemClock.elapsedRealtime()
+    }
+
+    private fun isInternalPlaybackActiveOrRecent(): Boolean {
+        if (isAssistantSpeaking) return true
+        val mpPlaying = try {
+            mediaPlayer?.isPlaying == true
+        } catch (_: Exception) {
+            false
+        }
+        if (mpPlaying) return true
+        return (SystemClock.elapsedRealtime() - lastPlaybackEndTimeMs) < POST_PLAYBACK_GUARD_MS
+    }
+
+    private fun updateScreenStatus(mainMessage: String, heardNote: String? = null) {
+        if (heardNote != null && heardNote.isNotBlank()) {
+            lastHeardPreview = heardNote
+        }
+        val fullText = if (lastHeardPreview.isNotBlank()) {
+            "$mainMessage\n\nसुना गया: $lastHeardPreview"
+        } else {
+            mainMessage
+        }
+        runOnUiThread {
+            statusText.text = fullText
+        }
+    }
+
     private fun initOfflineTts() {
         val appContext = applicationContext
         tts = TextToSpeech(appContext) { status ->
@@ -106,6 +147,20 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                         tts?.setLanguage(Locale.getDefault())
                     }
                 }
+                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {
+                        markPlaybackStarted()
+                    }
+
+                    override fun onDone(utteranceId: String?) {
+                        markPlaybackEnded()
+                    }
+
+                    @Deprecated("Deprecated in Java")
+                    override fun onError(utteranceId: String?) {
+                        markPlaybackEnded()
+                    }
+                })
                 ttsReady = true
                 if (!startupSpoken) {
                     startupSpoken = true
@@ -126,9 +181,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         if (requestCode == PERMISSION_REQUEST_CODE && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             initVoskModel()
         } else {
-            runOnUiThread {
-                statusText.text = "माइक की अनुमति नहीं मिली, इसलिए मैं सुन नहीं पा रहा हूँ।"
-            }
+            updateScreenStatus("माइक की अनुमति नहीं मिली, इसलिए मैं सुन नहीं पा रहा हूँ।")
         }
     }
 
@@ -165,26 +218,24 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 if (copiedCount == 0) {
                     val rootAssets = assets.list("")?.joinToString(", ") ?: "खाली"
                     val modelAssets = assets.list("model-en-us")?.joinToString(", ") ?: "नहीं मिला"
-                    runOnUiThread {
-                        statusText.text = "वॉइस मॉडल फ़ाइलें नहीं मिलीं, इसलिए सुनना शुरू नहीं हो सका।\nAssets root: $rootAssets\nmodel-en-us: $modelAssets"
-                    }
+                    updateScreenStatus("वॉइस मॉडल फ़ाइलें नहीं मिलीं, इसलिए सुनना शुरू नहीं हो सका।\nAssets root: $rootAssets\nmodel-en-us: $modelAssets")
                     return@Thread
                 }
 
                 val model = Model(outDir.absolutePath)
                 recognizer = Recognizer(model, SAMPLE_RATE)
                 speechService = SpeechService(recognizer, SAMPLE_RATE)
-                isModelReady = true
-                runOnUiThread {
-                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। 'Jarvis' कहकर कमांड दें..."
+                val started = speechService?.startListening(this) ?: false
+                isModelReady = started
+                if (started) {
+                    updateScreenStatus("सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। माइक चालू है, बोलिए...")
+                } else {
+                    updateScreenStatus("मॉडल लोड हो गया, लेकिन SpeechService.startListening ने false दिया (माइक या ऑडियो स्रोत में दिक्कत हो सकती है)।")
                 }
-                speechService?.startListening(this)
             } catch (e: Exception) {
                 val info = inspectModelDir(outDir)
                 val traceLines = e.stackTraceToString().lines().take(4).joinToString("\n")
-                runOnUiThread {
-                    statusText.text = "मॉडल लोड नहीं हो सका—वजह: ${e.message}\nकॉपी हुई फ़ाइलें: $copiedCount\n\n$info\n\n$traceLines"
-                }
+                updateScreenStatus("मॉडल लोड नहीं हो सका—वजह: ${e.message}\nकॉपी हुई फ़ाइलें: $copiedCount\n\n$info\n\n$traceLines")
             }
         }.start()
     }
@@ -220,6 +271,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private fun stopSpeakingNow() {
         pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
         pendingLaunchRunnable = null
+        markPlaybackEnded()
         runOnUiThread {
             try {
                 tts?.stop()
@@ -237,13 +289,11 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private fun reportFailureReason(reasonText: String, forceSpeak: Boolean = true) {
         val now = SystemClock.elapsedRealtime()
         if (!forceSpeak && (now - lastFailureReasonTimeMs) < FAILURE_NOTICE_COOLDOWN_MS) {
-            runOnUiThread { statusText.text = reasonText }
+            updateScreenStatus(reasonText)
             return
         }
         lastFailureReasonTimeMs = now
-        runOnUiThread {
-            statusText.text = reasonText
-        }
+        updateScreenStatus(reasonText)
         if (forceSpeak && shouldSpeakOnce(reasonText)) {
             speak(reasonText, speak = true)
         }
@@ -325,9 +375,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
         pendingLaunchRunnable = null
 
-        runOnUiThread {
-            statusText.text = spokenAnnouncement
-        }
+        updateScreenStatus(spokenAnnouncement)
         speak(spokenAnnouncement, speak = true)
 
         val runnable = Runnable {
@@ -460,11 +508,11 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         return null
     }
 
-    private fun extractHeardText(jsonText: String?): String {
+    private fun extractHeardText(jsonText: String?, keyName: String = "text"): String {
         if (jsonText.isNullOrBlank()) return ""
         return try {
             val obj = JSONObject(jsonText)
-            obj.optString("text", "")
+            obj.optString(keyName, "")
         } catch (_: Exception) {
             jsonText
         }
@@ -490,23 +538,24 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         return true
     }
 
-    private fun evaluateUtterance(rawHypothesis: String?): Pair<String, Any>? {
+    private fun evaluateUtterance(rawHypothesis: String?, keyName: String = "text"): Pair<String, Any>? {
         if ((SystemClock.elapsedRealtime() - activityCreatedAtMs) < STARTUP_IGNORE_WINDOW_MS) {
             return null
         }
 
-        val rawHeard = extractHeardText(rawHypothesis).trim()
+        // इंटरनल प्लेबैक (खुद की आवाज़ / गूँज) को इनपुट कमांड से घटाने/रोकने का गार्ड
+        if (isInternalPlaybackActiveOrRecent()) {
+            return null
+        }
+
+        val rawHeard = extractHeardText(rawHypothesis, keyName).trim()
         val spoken = rawHeard.lowercase(Locale.getDefault())
         if (spoken.isEmpty()) return null
 
-        val words = spoken.split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (words.isEmpty()) return null
+        updateScreenStatus(statusText.text.toString().substringBefore("\n\nसुना गया:"), rawHeard)
 
-        // पंखे/मोटर/बैकग्राउंड शोर से होने वाली ग़लत पकड़ घटाने के लिए 'Jarvis' ज़रूरी है
-        val hasWakeWord = spoken.contains("jarvis") || spoken.contains("जार्विस")
-        if (!hasWakeWord) {
-            return null
-        }
+        // छोटे/टूट-फूट वाले शोर को छानने की संवेदनशीलता (कम से कम 3 अक्षर)
+        if (spoken.length < 3) return null
 
         if (spoken.contains("stop") || spoken.contains("ruko") || spoken.contains("रुको") || spoken.contains("बंद")) {
             stopSpeakingNow()
@@ -546,14 +595,14 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
-    private fun handleCompleteSpeech(rawHypothesis: String?) {
-        val matched = evaluateUtterance(rawHypothesis) ?: return
+    private fun handleCompleteSpeech(rawHypothesis: String?, keyName: String = "text") {
+        val matched = evaluateUtterance(rawHypothesis, keyName) ?: return
         if (!canRunCommand(matched.first)) return
 
         when (matched.first) {
             "stop" -> {
                 val msg = matched.second as String
-                runOnUiThread { statusText.text = msg }
+                updateScreenStatus(msg)
             }
             "app_open" -> {
                 @Suppress("UNCHECKED_CAST")
@@ -569,9 +618,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             }
             else -> {
                 val reply = matched.second as String
-                runOnUiThread {
-                    statusText.text = reply
-                }
+                updateScreenStatus(reply)
                 if (shouldSpeakOnce(reply)) {
                     speak(reply, speak = true)
                 }
@@ -579,14 +626,23 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 
-    override fun onPartialResult(hypothesis: String?) {}
+    override fun onPartialResult(hypothesis: String?) {
+        val partial = extractHeardText(hypothesis, "partial").trim()
+        if (partial.isNotEmpty() && partial != lastHeardPreview) {
+            lastHeardPreview = partial
+            runOnUiThread {
+                val base = statusText.text.toString().substringBefore("\n\nसुना गया:")
+                statusText.text = "$base\n\nसुना गया: $partial"
+            }
+        }
+    }
 
     override fun onResult(hypothesis: String?) {
-        handleCompleteSpeech(hypothesis)
+        handleCompleteSpeech(hypothesis, "text")
     }
 
     override fun onFinalResult(hypothesis: String?) {
-        // दोहराव रोकने के लिए केवल onResult से कमांड चलाते हैं
+        handleCompleteSpeech(hypothesis, "text")
     }
 
     override fun onError(exception: Exception?) {
@@ -614,10 +670,14 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private fun speakOfflineLocal(text: String) {
         runOnUiThread {
             if (!ttsReady || text.isBlank()) return@runOnUiThread
+            markPlaybackStarted()
             val params = Bundle().apply {
                 putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
             }
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "JarvisOfflineUtterance")
+            val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "JarvisOfflineUtterance")
+            if (result != TextToSpeech.SUCCESS) {
+                markPlaybackEnded()
+            }
         }
     }
 
@@ -665,6 +725,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private fun playMp3File(file: File, fallbackText: String) {
         try {
             mediaPlayer?.release()
+            markPlaybackStarted()
             mediaPlayer = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
@@ -673,16 +734,25 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                         .build()
                 )
                 setDataSource(file.absolutePath)
+                setOnCompletionListener {
+                    markPlaybackEnded()
+                }
+                setOnErrorListener { _, _, _ ->
+                    markPlaybackEnded()
+                    false
+                }
                 prepare()
                 start()
             }
         } catch (_: Exception) {
+            markPlaybackEnded()
             speakOfflineLocal(fallbackText)
         }
     }
 
     override fun onDestroy() {
         pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
+        markPlaybackEnded()
         speechService?.stop()
         speechService?.shutdown()
         recognizer?.close()
