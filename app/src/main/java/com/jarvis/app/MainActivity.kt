@@ -746,3 +746,4 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
     }
 }
+}
