@@ -1,765 +1,514 @@
-package com.jarvis.app
+package com.dhanouriworld.jarvis
 
 import android.Manifest
-import android.content.Intent
-import android.content.IntentFilter
+import android.annotation.SuppressLint
+import android.content.ContentValues
+import android.content.Context
 import android.content.pm.PackageManager
-import android.content.pm.ResolveInfo
-import android.content.res.AssetManager
-import android.media.AudioAttributes
-import android.media.MediaPlayer
-import android.net.Uri
-import android.os.BatteryManager
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
+import android.location.Geocoder
+import android.location.Location
+import android.location.LocationManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.SystemClock
 import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
-import android.widget.LinearLayout
+import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import org.json.JSONObject
-import org.vosk.Model
-import org.vosk.Recognizer
-import org.vosk.android.RecognitionListener
-import org.vosk.android.SpeechService
-import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
+import kotlin.math.max
+import kotlin.math.min
 
-class MainActivity : AppCompatActivity(), RecognitionListener {
-
-    private lateinit var statusText: TextView
-
-    private var tts: TextToSpeech? = null
-    private var ttsReady: Boolean = false
-    private var startupSpoken: Boolean = false
-    private var activityCreatedAtMs: Long = 0L
-
-    private var recognizer: Recognizer? = null
-    private var speechService: SpeechService? = null
-    private var mediaPlayer: MediaPlayer? = null
-    private var isModelReady: Boolean = false
-
-    @Volatile
-    private var isAssistantSpeaking: Boolean = false
-    private var lastPlaybackEndTimeMs: Long = 0L
-
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var pendingLaunchRunnable: Runnable? = null
-
-    private var lastCommandKey: String = ""
-    private var lastCommandTimeMs: Long = 0L
-    private var lastSpokenText: String = ""
-    private var lastSpokenTimeMs: Long = 0L
-    private var lastFailureReasonTimeMs: Long = 0L
-    private var lastHeardPreview: String = ""
-
-    private val elevenLabsApiKey = "YOUR_ELEVENLABS_API_KEY"
-    private val elevenLabsVoiceId = "21m00Tcm4TlvDq8ikWAM"
+class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
 
     companion object {
-        private const val PERMISSION_REQUEST_CODE = 1
-        private const val SAMPLE_RATE = 16000.0f
-        private const val STARTUP_IGNORE_WINDOW_MS = 1800L
-        private const val POST_PLAYBACK_GUARD_MS = 700L
-        private const val SAME_COMMAND_COOLDOWN_MS = 2000L
-        private const val SAME_TEXT_REPEAT_GUARD_MS = 4000L
-        private const val FAILURE_NOTICE_COOLDOWN_MS = 4500L
-        private const val APP_LAUNCH_DELAY_MS = 1400L
+        private const val LOCATION_PERM_CODE = 101
+        private const val DISTANCE_THRESHOLD_METERS = 500.0
+        private const val SYNC_CYCLE_MS = 12L * 60L * 60L * 1000L // 12 घंटे का संतुलित चक्र
+        private const val FIVE_MIN_MS = 5L * 60L * 1000L          // 5 मिनट का सुरक्षित अंतराल
+        private const val PREFS_NAME = "jarvis_local_prefs"
+        private const val KEY_HOME_LAT = "home_lat"
+        private const val KEY_HOME_LON = "home_lon"
+        private const val KEY_HOME_SET = "home_set"
+        private const val KEY_LAST_CHECK_LAT = "last_check_lat"
+        private const val KEY_LAST_CHECK_LON = "last_check_lon"
+        private const val KEY_LAST_CHECK_TIME = "last_check_time"
+        private const val KEY_LAST_SYNC_TIME = "last_sync_time"
     }
+
+    private lateinit var dbHelper: JarvisDatabaseHelper
+    private lateinit var tvStatus: TextView
+    private lateinit var etInput: EditText
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        activityCreatedAtMs = SystemClock.elapsedRealtime()
+        setContentView(R.layout.activity_main)
 
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(40, 40, 40, 40)
+        dbHelper = JarvisDatabaseHelper(this)
+        tts = TextToSpeech(this, this)
+
+        tvStatus = findViewById(R.id.tvStatus)
+        etInput = findViewById(R.id.etInput)
+
+        val btnMarkHome: Button = findViewById(R.id.btnMarkHome)
+        val btnCheck500m: Button = findViewById(R.id.btnCheck500m)
+        val btnAsk: Button = findViewById(R.id.btnAsk)
+        val btnVisitSummary: Button = findViewById(R.id.btnVisitSummary)
+
+        // घर (जैसे जसौली) को एक बार मार्क करें ताकि बार-बार घर की फ़ालतू एंट्री न हो
+        btnMarkHome.setOnClickListener {
+            markCurrentLocationAsHome()
         }
 
-        statusText = TextView(this).apply {
-            text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।"
-            textSize = 15f
+        // फ़ोन एक्टिव/ऑन रहते हुए 500 मीटर दूरी जाँचें (ऑफ़लाइन दूरी पहचान + नेटवर्क/अनुमति के साथ सेव)
+        btnCheck500m.setOnClickListener {
+            check500MeterRule()
         }
 
-        layout.addView(statusText)
-        setContentView(layout)
-
-        initOfflineTts()
-
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), PERMISSION_REQUEST_CODE)
-        } else {
-            initVoskModel()
-        }
-    }
-
-    private fun markPlaybackStarted() {
-        isAssistantSpeaking = true
-    }
-
-    private fun markPlaybackEnded() {
-        isAssistantSpeaking = false
-        lastPlaybackEndTimeMs = SystemClock.elapsedRealtime()
-    }
-
-    private fun isInternalPlaybackActiveOrRecent(): Boolean {
-        if (isAssistantSpeaking) return true
-        val mpPlaying = try {
-            mediaPlayer?.isPlaying == true
-        } catch (_: Exception) {
-            false
-        }
-        if (mpPlaying) return true
-        return (SystemClock.elapsedRealtime() - lastPlaybackEndTimeMs) < POST_PLAYBACK_GUARD_MS
-    }
-
-    private fun updateScreenStatus(mainMessage: String, heardNote: String? = null) {
-        if (heardNote != null && heardNote.isNotBlank()) {
-            lastHeardPreview = heardNote
-        }
-        val fullText = if (lastHeardPreview.isNotBlank()) {
-            "$mainMessage\n\nसुना गया: $lastHeardPreview"
-        } else {
-            mainMessage
-        }
-        runOnUiThread {
-            statusText.text = fullText
-        }
-    }
-
-    private fun initOfflineTts() {
-        val appContext = applicationContext
-        tts = TextToSpeech(appContext) { status ->
-            if (status == TextToSpeech.SUCCESS) {
-                val hiStatus = tts?.setLanguage(Locale("hi", "IN"))
-                if (hiStatus == TextToSpeech.LANG_MISSING_DATA || hiStatus == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    val enStatus = tts?.setLanguage(Locale.US)
-                    if (enStatus == TextToSpeech.LANG_MISSING_DATA || enStatus == TextToSpeech.LANG_NOT_SUPPORTED) {
-                        tts?.setLanguage(Locale.getDefault())
-                    }
-                }
-                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(utteranceId: String?) {
-                        markPlaybackStarted()
-                    }
-
-                    override fun onDone(utteranceId: String?) {
-                        markPlaybackEnded()
-                    }
-
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(utteranceId: String?) {
-                        markPlaybackEnded()
-                    }
-                })
-                ttsReady = true
-                if (!startupSpoken) {
-                    startupSpoken = true
-                    speak("सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।", speak = true)
-                }
-            } else {
-                ttsReady = false
+        // सवाल/बात भेजें: ऑफ़लाइन लोकल SQLite से ढूँढें या ऑनलाइन में नई/गैर-डुप्लिकेट बात सीखें
+        btnAsk.setOnClickListener {
+            val userText = etInput.text.toString().trim()
+            if (userText.isNotEmpty()) {
+                handleUserQuery(userText)
+                etInput.text.clear()
             }
         }
+
+        // विज़िट गिनती देखें (कितनी बार और कब-कब गए)
+        btnVisitSummary.setOnClickListener {
+            val summary = dbHelper.getVisitsSummary()
+            showAndSpeak(summary)
+        }
+
+        requestLocationPermissionIfNeeded()
+        updateStatusText("जार्विस तैयार है। (500m ऑफ़लाइन दूरी + 12h चक्र + SQLite लोकल मेमोरी)")
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == PERMISSION_REQUEST_CODE && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            initVoskModel()
-        } else {
-            updateScreenStatus("माइक की अनुमति नहीं मिली, इसलिए मैं सुन नहीं पा रहा हूँ।")
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts?.language = Locale("hi", "IN")
+            ttsReady = true
         }
     }
 
-    private fun inspectModelDir(dir: File): String {
-        if (!dir.exists()) return "डायरेक्टरी मौजूद नहीं है"
-        val details = mutableListOf<String>()
-        for (sub in listOf("am", "conf", "graph", "ivector")) {
-            val subDir = File(dir, sub)
-            if (!subDir.exists()) {
-                details.add("$sub: गायब")
-            } else {
-                val files = subDir.listFiles()
-                if (files == null || files.isEmpty()) {
-                    details.add("$sub: खाली (0 फ़ाइल)")
-                } else {
-                    val summary = files.take(3).joinToString(", ") { "${it.name}(${it.length()}B)" }
-                    details.add("$sub: ${files.size} फ़ाइलें [$summary]")
-                }
-            }
-        }
-        return details.joinToString("\n")
-    }
-
-    private fun initVoskModel() {
-        Thread {
-            val outDir = File(filesDir, "model-en-us")
-            var copiedCount = 0
-            try {
-                if (outDir.exists()) {
-                    outDir.deleteRecursively()
-                }
-                copiedCount = copyAssetFolder(assets, "model-en-us", outDir.absolutePath)
-
-                if (copiedCount == 0) {
-                    val rootAssets = assets.list("")?.joinToString(", ") ?: "खाली"
-                    val modelAssets = assets.list("model-en-us")?.joinToString(", ") ?: "नहीं मिला"
-                    updateScreenStatus("वॉइस मॉडल फ़ाइलें नहीं मिलीं, इसलिए सुनना शुरू नहीं हो सका।\nAssets root: $rootAssets\nmodel-en-us: $modelAssets")
-                    return@Thread
-                }
-
-                val model = Model(outDir.absolutePath)
-                recognizer = Recognizer(model, SAMPLE_RATE)
-                speechService = SpeechService(recognizer, SAMPLE_RATE)
-                val started = speechService?.startListening(this) ?: false
-                isModelReady = started
-                if (started) {
-                    updateScreenStatus("सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। माइक चालू है, बोलिए...")
-                } else {
-                    updateScreenStatus("मॉडल लोड हो गया, लेकिन SpeechService.startListening ने false दिया (माइक या ऑडियो स्रोत में दिक्कत हो सकती है)।")
-                }
-            } catch (e: Exception) {
-                val info = inspectModelDir(outDir)
-                val traceLines = e.stackTraceToString().lines().take(4).joinToString("\n")
-                updateScreenStatus("मॉडल लोड नहीं हो सका—वजह: ${e.message}\nकॉपी हुई फ़ाइलें: $copiedCount\n\n$info\n\n$traceLines")
-            }
-        }.start()
-    }
-
-    private fun copyAssetFolder(assetManager: AssetManager, fromAssetPath: String, toPath: String): Int {
-        var count = 0
-        try {
-            val files = assetManager.list(fromAssetPath)
-            if (files != null && files.isNotEmpty()) {
-                val targetDir = File(toPath)
-                if (!targetDir.exists()) targetDir.mkdirs()
-                for (file in files) {
-                    count += copyAssetFolder(assetManager, "$fromAssetPath/$file", "$toPath/$file")
-                }
-            } else {
-                try {
-                    assetManager.open(fromAssetPath).use { input ->
-                        val outFile = File(toPath)
-                        outFile.parentFile?.mkdirs()
-                        FileOutputStream(outFile).use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    count = 1
-                } catch (_: Exception) {
-                }
-            }
-        } catch (_: Exception) {
-        }
-        return count
-    }
-
-    private fun stopSpeakingNow() {
-        pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
-        pendingLaunchRunnable = null
-        markPlaybackEnded()
-        runOnUiThread {
-            try {
-                tts?.stop()
-            } catch (_: Exception) {
-            }
-            try {
-                if (mediaPlayer?.isPlaying == true) {
-                    mediaPlayer?.pause()
-                }
-            } catch (_: Exception) {
-            }
+    private fun showAndSpeak(message: String) {
+        tvStatus.text = message
+        if (ttsReady) {
+            tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "jarvis_utt")
         }
     }
 
-    private fun reportFailureReason(reasonText: String, forceSpeak: Boolean = true) {
-        val now = SystemClock.elapsedRealtime()
-        if (!forceSpeak && (now - lastFailureReasonTimeMs) < FAILURE_NOTICE_COOLDOWN_MS) {
-            updateScreenStatus(reasonText)
-            return
-        }
-        lastFailureReasonTimeMs = now
-        updateScreenStatus(reasonText)
-        if (forceSpeak && shouldSpeakOnce(reasonText)) {
-            speak(reasonText, speak = true)
-        }
+    private fun updateStatusText(message: String) {
+        tvStatus.text = message
     }
 
-    private fun getTimeInfoText(): String {
-        val currentTime = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
-        return "अभी समय $currentTime हो रहा है।"
-    }
+    private fun requestLocationPermissionIfNeeded() {
+        val fineGranted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
 
-    private fun getDateInfoText(): String {
-        val formattedDate = SimpleDateFormat("dd MMMM yyyy", Locale("hi", "IN")).format(Date())
-        return "आज की तारीख़ $formattedDate है।"
-    }
-
-    private fun getDayInfoText(): String {
-        val dayName = SimpleDateFormat("EEEE", Locale("hi", "IN")).format(Date())
-        return "आज $dayName है।"
-    }
-
-    private fun getBatteryInfoText(): String {
-        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-        val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-        val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-            status == BatteryManager.BATTERY_STATUS_FULL
-
-        if (level < 0 || scale <= 0) {
-            return "बैटरी की जानकारी नहीं मिल सकी, क्योंकि सिस्टम ने बैटरी लेवल नहीं दिया।"
-        }
-        val pct = (level * 100) / scale
-        return if (isCharging) {
-            "बैटरी $pct प्रतिशत है और फ़ोन चार्ज हो रहा है।"
-        } else {
-            "बैटरी बैकअप $pct प्रतिशत बाकी है।"
-        }
-    }
-
-    private fun buildPackageLaunchAction(packageName: String, fallbackUrl: String, label: String): () -> Pair<Boolean, String> {
-        return {
-            try {
-                val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-                if (launchIntent != null) {
-                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    startActivity(launchIntent)
-                    Pair(true, "")
-                } else {
-                    val mainCategoryIntent = Intent(Intent.ACTION_MAIN).apply {
-                        addCategory(Intent.CATEGORY_LAUNCHER)
-                        setPackage(packageName)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    val resolved = packageManager.queryIntentActivities(mainCategoryIntent, 0)
-                    if (resolved.isNotEmpty()) {
-                        val first = resolved[0].activityInfo
-                        mainCategoryIntent.setClassName(first.packageName, first.name)
-                        startActivity(mainCategoryIntent)
-                        Pair(true, "")
-                    } else if (fallbackUrl.isNotBlank()) {
-                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl)).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        startActivity(webIntent)
-                        Pair(true, "")
-                    } else {
-                        Pair(false, "$label नहीं खुल सका, क्योंकि यह ऐप फ़ोन में नहीं मिला या लॉन्च इंटेंट उपलब्ध नहीं है।")
-                    }
-                }
-            } catch (e: SecurityException) {
-                Pair(false, "$label नहीं खुल सका, क्योंकि Android सुरक्षा या अनुमति ने इसे रोका है। (${e.message ?: "SecurityException"})")
-            } catch (e: Exception) {
-                Pair(false, "$label नहीं खुल सका, वजह यह है: ${e.message ?: "लॉन्च त्रुटि"}।")
-            }
-        }
-    }
-
-    private fun scheduleSpeakThenLaunch(label: String, spokenAnnouncement: String, launchAction: () -> Pair<Boolean, String>) {
-        pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
-        pendingLaunchRunnable = null
-
-        updateScreenStatus(spokenAnnouncement)
-        speak(spokenAnnouncement, speak = true)
-
-        val runnable = Runnable {
-            pendingLaunchRunnable = null
-            val (opened, failReason) = launchAction()
-            if (!opened) {
-                val reason = if (failReason.isNotBlank()) {
-                    failReason
-                } else {
-                    "$label नहीं खुल सका, क्योंकि ऐप लॉन्च नहीं हो पाया।"
-                }
-                reportFailureReason(reason, forceSpeak = true)
-            }
-        }
-        pendingLaunchRunnable = runnable
-        mainHandler.postDelayed(runnable, APP_LAUNCH_DELAY_MS)
-    }
-
-    private fun matchAppToLaunch(spoken: String): Triple<String, String, () -> Pair<Boolean, String>>? {
-        if (spoken.contains("play store") || spoken.contains("playstore") || spoken.contains("प्ले स्टोर") || spoken.contains("प्लेस्टोर")) {
-            val label = "Play Store"
-            return Triple(
-                label,
-                "सर, $label खोला जा रहा है।",
-                buildPackageLaunchAction("com.android.vending", "https://play.google.com/store", label)
+        if (!fineGranted) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ),
+                LOCATION_PERM_CODE
             )
         }
-        if (spoken.contains("whatsapp") || spoken.contains("व्हाट्सएप") || spoken.contains("वॉट्सएप") || spoken.contains("what's up")) {
-            val label = "WhatsApp"
-            return Triple(
-                label,
-                "सर, $label खोला जा रहा है।",
-                buildPackageLaunchAction("com.whatsapp", "https://www.whatsapp.com", label)
-            )
-        }
-        if (spoken.contains("youtube") || spoken.contains("यूट्यूब") || spoken.contains("you tube")) {
-            val label = "YouTube"
-            return Triple(
-                label,
-                "सर, $label खोला जा रहा है।",
-                buildPackageLaunchAction("com.google.android.youtube", "https://www.youtube.com", label)
-            )
-        }
-        if (spoken.contains("instagram") || spoken.contains("इंस्टाग्राम") || spoken.contains("insta")) {
-            val label = "Instagram"
-            return Triple(
-                label,
-                "सर, $label खोला जा रहा है।",
-                buildPackageLaunchAction("com.instagram.android", "https://www.instagram.com", label)
-            )
-        }
-
-        val cleaned = spoken
-            .replace("jarvis", " ")
-            .replace("जार्विस", " ")
-            .replace("open", " ")
-            .replace("launch", " ")
-            .replace("start", " ")
-            .replace("kholo", " ")
-            .replace("khol", " ")
-            .replace("chalu", " ")
-            .replace("karo", " ")
-            .replace("करो", " ")
-            .replace("खोलो", " ")
-            .replace("खोल", " ")
-            .replace("ऐप", " ")
-            .replace("app", " ")
-            .trim()
-
-        val tokens = cleaned
-            .split(Regex("[^a-zA-Z0-9\\u0900-\\u097F]+"))
-            .map { it.trim() }
-            .filter { it.length >= 3 }
-
-        if (tokens.isEmpty()) return null
-
-        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-        }
-
-        val activities: List<ResolveInfo> = try {
-            packageManager.queryIntentActivities(mainIntent, 0)
-        } catch (_: Exception) {
-            emptyList()
-        }
-
-        var bestMatch: Triple<String, String, Intent>? = null
-        var bestScore = 0
-
-        for (info in activities) {
-            val label = info.loadLabel(packageManager)?.toString()?.lowercase(Locale.getDefault())?.trim() ?: continue
-            val pkg = info.activityInfo?.packageName ?: continue
-            if (pkg == packageName) continue
-
-            var score = 0
-            for (token in tokens) {
-                if (label == token) {
-                    score += 100
-                } else if (label.contains(token) && token.length >= 4) {
-                    score += 55
-                } else if (token.contains(label) && label.length >= 4) {
-                    score += 45
-                }
-            }
-
-            if (score > bestScore) {
-                bestScore = score
-                val launchIntent = Intent(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_LAUNCHER)
-                    setClassName(pkg, info.activityInfo.name)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                }
-                bestMatch = Triple(info.loadLabel(packageManager).toString(), pkg, launchIntent)
-            }
-        }
-
-        if (bestMatch != null && bestScore >= 55) {
-            val appTitle = bestMatch.first
-            val targetIntent = bestMatch.third
-            return Triple(appTitle, "सर, $appTitle खोला जा रहा है।") {
-                try {
-                    startActivity(targetIntent)
-                    Pair(true, "")
-                } catch (e: Exception) {
-                    Pair(false, "$appTitle नहीं खुल सका, वजह यह है: ${e.message ?: "लॉन्च त्रुटि"}।")
-                }
-            }
-        }
-
-        return null
     }
 
-    private fun extractHeardText(jsonText: String?, keyName: String = "text"): String {
-        if (jsonText.isNullOrBlank()) return ""
-        return try {
-            val obj = JSONObject(jsonText)
-            obj.optString(keyName, "")
-        } catch (_: Exception) {
-            jsonText
-        }
-    }
-
-    private fun canRunCommand(key: String): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        if (key == lastCommandKey && (now - lastCommandTimeMs) < SAME_COMMAND_COOLDOWN_MS) {
-            return false
-        }
-        lastCommandKey = key
-        lastCommandTimeMs = now
-        return true
-    }
-
-    private fun shouldSpeakOnce(replyText: String): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        if (replyText == lastSpokenText && (now - lastSpokenTimeMs) < SAME_TEXT_REPEAT_GUARD_MS) {
-            return false
-        }
-        lastSpokenText = replyText
-        lastSpokenTimeMs = now
-        return true
-    }
-
-    private fun evaluateUtterance(rawHypothesis: String?, keyName: String = "text"): Pair<String, Any>? {
-        if ((SystemClock.elapsedRealtime() - activityCreatedAtMs) < STARTUP_IGNORE_WINDOW_MS) {
+    @SuppressLint("MissingPermission")
+    private fun getCurrentLocation(): Location? {
+        if (ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACCESS_FINE_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestLocationPermissionIfNeeded()
             return null
         }
 
-        // इंटरनल प्लेबैक (खुद की आवाज़ / गूँज) को इनपुट कमांड से घटाने/रोकने का गार्ड
-        if (isInternalPlaybackActiveOrRecent()) {
-            return null
-        }
-
-        val rawHeard = extractHeardText(rawHypothesis, keyName).trim()
-        val spoken = rawHeard.lowercase(Locale.getDefault())
-        if (spoken.isEmpty()) return null
-
-        updateScreenStatus(statusText.text.toString().substringBefore("\n\nसुना गया:"), rawHeard)
-
-        // छोटे/टूट-फूट वाले शोर को छानने की संवेदनशीलता (कम से कम 3 अक्षर)
-        if (spoken.length < 3) return null
-
-        if (spoken.contains("stop") || spoken.contains("ruko") || spoken.contains("रुको") || spoken.contains("बंद")) {
-            stopSpeakingNow()
-            return Pair("stop", "ठीक है, मैं चुप हो गया। सुन रहा हूँ...")
-        }
-
-        val hasTimeWord = spoken.contains("time") || spoken.contains("टाइम") || spoken.contains("समय") ||
-            spoken.contains("samay") || spoken.contains("waqt") || spoken.contains("वक्त")
-        val hasDateWord = spoken.contains("date") || spoken.contains("tarik") || spoken.contains("tariq") ||
-            spoken.contains("tareekh") || spoken.contains("तारीख") || spoken.contains("तारीख़")
-        val hasDayWord = spoken.contains("day") || spoken.contains("din") || spoken.contains("दिन") ||
-            spoken.contains("war") || spoken.contains("vaar") || spoken.contains("वार")
-        val hasBatteryWord = spoken.contains("battery") || spoken.contains("बैटरी") ||
-            spoken.contains("charge") || spoken.contains("charging") || spoken.contains("चार्ज")
-
-        val hasOpenIntent = spoken.contains("open") || spoken.contains("launch") || spoken.contains("start") ||
-            spoken.contains("kholo") || spoken.contains("khol") || spoken.contains("खोलो") ||
-            spoken.contains("खोल") || spoken.contains("chalu") || spoken.contains("चालू")
-
-        if (hasOpenIntent) {
-            val appTriple = matchAppToLaunch(spoken)
-            if (appTriple != null) {
-                return Pair("app_open", appTriple)
-            }
-            return Pair(
-                "unmatched_open",
-                "मैंने \"$rawHeard\" सुना, लेकिन यह ऐप फ़ोन में नहीं मिला या नाम मैच नहीं हुआ।"
-            )
-        }
+        val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val gpsLoc = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+        val netLoc = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
 
         return when {
-            hasBatteryWord -> Pair("battery", getBatteryInfoText())
-            hasDateWord -> Pair("date", getDateInfoText())
-            hasDayWord -> Pair("day", getDayInfoText())
-            hasTimeWord -> Pair("time", getTimeInfoText())
+            gpsLoc != null && netLoc != null -> if (gpsLoc.time >= netLoc.time) gpsLoc else netLoc
+            gpsLoc != null -> gpsLoc
+            netLoc != null -> netLoc
             else -> null
         }
     }
 
-    private fun handleCompleteSpeech(rawHypothesis: String?, keyName: String = "text") {
-        val matched = evaluateUtterance(rawHypothesis, keyName) ?: return
-        if (!canRunCommand(matched.first)) return
+    // 1. घर (जसौली) को मार्क करना ताकि घर में रहते हुए बार-बार फ़ालतू एंट्री न बने
+    private fun markCurrentLocationAsHome() {
+        val loc = getCurrentLocation()
+        if (loc == null) {
+            showAndSpeak("अभी लोकेशन नहीं मिल सकी। कृपया लोकेशन ऑन करके दोबारा कोशिश करें।")
+            return
+        }
 
-        when (matched.first) {
-            "stop" -> {
-                val msg = matched.second as String
-                updateScreenStatus(msg)
-            }
-            "app_open" -> {
-                @Suppress("UNCHECKED_CAST")
-                val appTriple = matched.second as Triple<String, String, () -> Pair<Boolean, String>>
-                val announcement = appTriple.second
-                if (shouldSpeakOnce(announcement)) {
-                    scheduleSpeakThenLaunch(appTriple.first, announcement, appTriple.third)
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putString(KEY_HOME_LAT, loc.latitude.toString())
+            .putString(KEY_HOME_LON, loc.longitude.toString())
+            .putBoolean(KEY_HOME_SET, true)
+            .putString(KEY_LAST_CHECK_LAT, loc.latitude.toString())
+            .putString(KEY_LAST_CHECK_LON, loc.longitude.toString())
+            .putLong(KEY_LAST_CHECK_TIME, System.currentTimeMillis())
+            .apply()
+
+        showAndSpeak("घर की लोकेशन सेव कर ली गई है। अब घर में रहने पर बार-बार फ़ालतू एंट्री नहीं होगी।")
+    }
+
+    private fun isNearHome(lat: Double, lon: Double): Boolean {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(KEY_HOME_SET, false)) return false
+
+        val homeLat = prefs.getString(KEY_HOME_LAT, null)?.toDoubleOrNull() ?: return false
+        val homeLon = prefs.getString(KEY_HOME_LON, null)?.toDoubleOrNull() ?: return false
+
+        val results = FloatArray(1)
+        Location.distanceBetween(homeLat, homeLon, lat, lon, results)
+        return results[0] <= DISTANCE_THRESHOLD_METERS
+    }
+
+    // 2. फ़ोन एक्टिव/ऑन रहते हुए 500 मीटर दूरी की जाँच (ऑफ़लाइन) -> फिर नेटवर्क व अनुमति के साथ सेव
+    private fun check500MeterRule() {
+        val now = System.currentTimeMillis()
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val lastCheckTime = prefs.getLong(KEY_LAST_CHECK_TIME, 0L)
+
+        // फ़ालतू बार-बार लूप से बचाव (कम से कम 5 मिनट का संतुलन)
+        if (lastCheckTime > 0L && (now - lastCheckTime) < FIVE_MIN_MS) {
+            val remainingSec = ((FIVE_MIN_MS - (now - lastCheckTime)) / 1000L)
+            showAndSpeak("बैटरी और रफ़्तार बचाने के लिए अभी 5 मिनट का अंतराल बाकी है ($remainingSec सेकंड)।")
+            return
+        }
+
+        val loc = getCurrentLocation()
+        if (loc == null) {
+            showAndSpeak("लोकेशन नहीं मिल पाई। कृपया लोकेशन सेवा चालू रखें।")
+            return
+        }
+
+        prefs.edit().putLong(KEY_LAST_CHECK_TIME, now).apply()
+
+        // अगर आप घर के 500 मीटर के दायरे में हैं, तो घर की फ़ालतू विज़िट एंट्री नहीं जोड़ेंगे
+        if (isNearHome(loc.latitude, loc.longitude)) {
+            showAndSpeak("आप घर के दायरे में हैं। यहाँ बार-बार घर की एंट्री सेव नहीं की जाएगी।")
+            return
+        }
+
+        val lastLat = prefs.getString(KEY_LAST_CHECK_LAT, null)?.toDoubleOrNull()
+        val lastLon = prefs.getString(KEY_LAST_CHECK_LON, null)?.toDoubleOrNull()
+
+        if (lastLat == null || lastLon == null) {
+            prefs.edit()
+                .putString(KEY_LAST_CHECK_LAT, loc.latitude.toString())
+                .putString(KEY_LAST_CHECK_LON, loc.longitude.toString())
+                .apply()
+            showAndSpeak("शुरुआती लोकेशन नोट कर ली गई है। 500 मीटर आगे बढ़ने पर मैं आपसे पूछूँगा।")
+            return
+        }
+
+        val distanceArr = FloatArray(1)
+        Location.distanceBetween(lastLat, lastLon, loc.latitude, loc.longitude, distanceArr)
+        val movedMeters = distanceArr[0].toDouble()
+
+        if (movedMeters < DISTANCE_THRESHOLD_METERS) {
+            showAndSpeak(
+                "आप पिछली जगह से लगभग ${movedMeters.toInt()} मीटर चले हैं। 500 मीटर पूरे होने पर मैं पूछूँगा।"
+            )
+            return
+        }
+
+        // 500 मीटर की दूरी पूरी हो चुकी है — अब अनुमति और नेटवर्क के लिए पूछें
+        promptFor500mSave(loc.latitude, loc.longitude, movedMeters.toInt())
+    }
+
+    private fun promptFor500mSave(lat: Double, lon: Double, meters: Int) {
+        val msg = "सर, नेटवर्क ओपन कीजिए। आप $meters मीटर की दूरी पर आ चुके हैं। " +
+            "अगर आपकी अनुमति हो तो मैं इस डेटा को सेव करूँ, इसके लिए आपको नेटवर्क ऑन करना पड़ेगा।"
+
+        AlertDialog.Builder(this)
+            .setTitle("500 मीटर नई दूरी — अनुमति")
+            .setMessage(msg)
+            .setPositiveButton("हाँ, अनुमति है") { _, _ ->
+                if (!isNetworkAvailable()) {
+                    showAndSpeak("नेटवर्क अभी बंद है। कृपया नेटवर्क ऑन करें, फिर अनुमति देकर सेव करें।")
+                    return@setPositiveButton
                 }
+
+                val placeName = resolvePlaceNameOnline(lat, lon)
+                val now = System.currentTimeMillis()
+                dbHelper.insertVisit(placeName, lat, lon, now)
+
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                    .putString(KEY_LAST_CHECK_LAT, lat.toString())
+                    .putString(KEY_LAST_CHECK_LON, lon.toString())
+                    .putLong(KEY_LAST_SYNC_TIME, now)
+                    .apply()
+
+                val count = dbHelper.getVisitCountForPlace(placeName)
+                showAndSpeak("अनुमति मिल गई। '$placeName' का रिकॉर्ड सेव हो गया है। यहाँ आपकी यह $count वीं दर्ज विज़िट है।")
             }
-            "unmatched_open" -> {
-                val reason = matched.second as String
-                reportFailureReason(reason, forceSpeak = false)
+            .setNegativeButton("नहीं, अभी नहीं") { dialog, _ ->
+                dialog.dismiss()
+                showAndSpeak("ठीक है, आपकी अनुमति के बिना यह डेटा सेव नहीं किया गया है।")
             }
-            else -> {
-                val reply = matched.second as String
-                updateScreenStatus(reply)
-                if (shouldSpeakOnce(reply)) {
-                    speak(reply, speak = true)
-                }
-            }
+            .show()
+
+        if (ttsReady) {
+            tts?.speak(msg, TextToSpeech.QUEUE_FLUSH, null, "ask_500m")
         }
     }
 
-    override fun onPartialResult(hypothesis: String?) {
-        val partial = extractHeardText(hypothesis, "partial").trim()
-        if (partial.isNotEmpty() && partial != lastHeardPreview) {
-            lastHeardPreview = partial
-            runOnUiThread {
-                val base = statusText.text.toString().substringBefore("\n\nसुना गया:")
-                statusText.text = "$base\n\nसुना गया: $partial"
-            }
-        }
-    }
-
-    override fun onResult(hypothesis: String?) {
-        handleCompleteSpeech(hypothesis, "text")
-    }
-
-    override fun onFinalResult(hypothesis: String?) {
-        handleCompleteSpeech(hypothesis, "text")
-    }
-
-    override fun onError(exception: Exception?) {
-        val msg = "सुनने का काम रुक गया—वजह: ${exception?.message ?: "माइक या रिकॉग्नाइज़र त्रुटि"}"
-        reportFailureReason(msg, forceSpeak = true)
-    }
-
-    override fun onTimeout() {
-        if (isModelReady) {
-            speechService?.startListening(this)
-        }
-    }
-
-    fun speak(text: String, speak: Boolean = true) {
-        if (!speak || text.isBlank()) return
-
-        val hasElevenLabsKey = elevenLabsApiKey.isNotBlank() && elevenLabsApiKey != "YOUR_ELEVENLABS_API_KEY"
-        if (hasElevenLabsKey) {
-            speakOnlineElevenLabs(text)
-        } else {
-            speakOfflineLocal(text)
-        }
-    }
-
-    private fun speakOfflineLocal(text: String) {
-        runOnUiThread {
-            if (!ttsReady || text.isBlank()) return@runOnUiThread
-            markPlaybackStarted()
-            val params = Bundle().apply {
-                putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
-            }
-            val result = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "JarvisOfflineUtterance")
-            if (result != TextToSpeech.SUCCESS) {
-                markPlaybackEnded()
-            }
-        }
-    }
-
-    private fun speakOnlineElevenLabs(text: String) {
-        Thread {
-            try {
-                val endpoint = URL("https://api.elevenlabs.io/v1/text-to-speech/$elevenLabsVoiceId")
-                val conn = (endpoint.openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    doOutput = true
-                    setRequestProperty("xi-api-key", elevenLabsApiKey)
-                    setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("Accept", "audio/mpeg")
-                }
-
-                val payload = JSONObject().apply {
-                    put("text", text)
-                    put("model_id", "eleven_multilingual_v2")
-                }.toString()
-
-                conn.outputStream.use { os ->
-                    os.write(payload.toByteArray(Charsets.UTF_8))
-                }
-
-                if (conn.responseCode == HttpURLConnection.HTTP_OK) {
-                    val tempFile = File(cacheDir, "jarvis_reply.mp3")
-                    conn.inputStream.use { input ->
-                        FileOutputStream(tempFile).use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-                    runOnUiThread {
-                        playMp3File(tempFile, text)
-                    }
-                } else {
-                    speakOfflineLocal(text)
-                }
-                conn.disconnect()
-            } catch (_: Exception) {
-                speakOfflineLocal(text)
-            }
-        }.start()
-    }
-
-    private fun playMp3File(file: File, fallbackText: String) {
-        try {
-            mediaPlayer?.release()
-            markPlaybackStarted()
-            mediaPlayer = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .build()
-                )
-                setDataSource(file.absolutePath)
-                setOnCompletionListener {
-                    markPlaybackEnded()
-                }
-                setOnErrorListener { _, _, _ ->
-                    markPlaybackEnded()
-                    false
-                }
-                prepare()
-                start()
-            }
+    private fun resolvePlaceNameOnline(lat: Double, lon: Double): String {
+        return try {
+            val geocoder = Geocoder(this, Locale("hi", "IN"))
+            @Suppress("DEPRECATION")
+            val list = geocoder.getFromLocation(lat, lon, 1)
+            val addr = list?.firstOrNull()
+            val area = addr?.subLocality ?: addr?.locality ?: addr?.subAdminArea ?: addr?.adminArea
+            if (!area.isNullOrBlank()) area else "बाहर का इलाका (${String.format(Locale.US, "%.4f", lat)}, ${String.format(Locale.US, "%.4f", lon)})"
         } catch (_: Exception) {
-            markPlaybackEnded()
-            speakOfflineLocal(fallbackText)
+            "बाहर का इलाका (${String.format(Locale.US, "%.4f", lat)}, ${String.format(Locale.US, "%.4f", lon)})"
         }
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val net = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(net) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    // 3. ऑफ़लाइन SQLite से जवाब या ऑनलाइन Gemini से सीखना (बिना हूबहू डुप्लिकेट के)
+    private fun handleUserQuery(userText: String) {
+        val cleanText = userText.trim()
+        if (cleanText.length < 2) {
+            showAndSpeak("कृपया थोड़ा साफ़ और पूरा वाक्य लिखें या बोलें।")
+            return
+        }
+
+        // पहले लोकल SQLite में खोजें (ऑफ़लाइन या तेज़ लोकल पकड़)
+        val localMatch = dbHelper.findBestLocalMatch(cleanText)
+        if (!isNetworkAvailable()) {
+            if (localMatch != null) {
+                showAndSpeak("[ऑफ़लाइन लोकल मेमोरी] $localMatch")
+            } else {
+                showAndSpeak("अभी इंटरनेट बंद है और इस अंदाज़ का रिकॉर्ड लोकल SQLite में नहीं मिला।")
+            }
+            return
+        }
+
+        // ऑनलाइन होने पर 12 घंटे चक्र / नई बात के हिसाब से सीखने की प्रक्रिया
+        val now = System.currentTimeMillis()
+        val lastSync = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(KEY_LAST_SYNC_TIME, 0L)
+        val within12hCycle = (now - lastSync) < SYNC_CYCLE_MS
+
+        // यहाँ वास्तविक Gemini API कॉल जोड़ी जाएगी; अभी संरचित जवाब तैयार करने का स्थान:
+        val instructorReply = fetchInstructorResponsePlaceholder(cleanText)
+
+        if (!isValidCleanText(instructorReply)) {
+            showAndSpeak("जवाब साफ़ या पूरा नहीं था, इसलिए इसे लोकल SQLite में सेव नहीं किया गया।")
+            return
+        }
+
+        // हूबहू डुप्लिकेट जाँच: अगर बिल्कुल वही सवाल/जवाब पहले से है, तो दोबारा सेव न करें
+        if (dbHelper.isExactDuplicate(cleanText, instructorReply)) {
+            showAndSpeak("$instructorReply (यह बिल्कुल वैसी ही बात पहले से सेव है, डुप्लिकेट नहीं जोड़ा गया।)")
+            return
+        }
+
+        // अगर कहने का अंदाज़/लफ़्ज़ नया है, तो लोकल SQLite में सेव करें
+        dbHelper.insertLearnedItem(cleanText, instructorReply, now)
+        if (!within12hCycle) {
+            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putLong(KEY_LAST_SYNC_TIME, now).apply()
+        }
+
+        showAndSpeak("$instructorReply (नया अंदाज़ लोकल SQLite में सुरक्षित कर लिया गया है।)")
+    }
+
+    private fun fetchInstructorResponsePlaceholder(query: String): String {
+        // नोट: यहाँ आपकी Gemini API Key और HTTP/SDK कॉल आएगी।
+        // जब तक API की नहीं जुड़ती, यह सुरक्षित फ़ॉलबैक है ताकि कुछ गलत-सलत सेव न हो।
+        return "मैंने आपकी बात '$query' समझ ली है। (Gemini API की जोड़ने पर यह यहाँ से ताज़ा जवाब लाएगा।)"
+    }
+
+    private fun isValidCleanText(text: String): Boolean {
+        val trimmed = text.trim()
+        return trimmed.length >= 4 && !trimmed.contains("error", ignoreCase = true)
     }
 
     override fun onDestroy() {
-        pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
-        markPlaybackEnded()
-        speechService?.stop()
-        speechService?.shutdown()
-        recognizer?.close()
-        mediaPlayer?.release()
         tts?.stop()
         tts?.shutdown()
-        tts = null
+        dbHelper.close()
         super.onDestroy()
+    }
+}
+
+// 4. लोकल SQLite डेटाबेस (सिर्फ़ आपके फ़ोन के अंदर, प्राइवेट और ऑफ़लाइन)
+class JarvisDatabaseHelper(context: Context) :
+    SQLiteOpenHelper(context, "jarvis_local.db", null, 1) {
+
+    override fun onCreate(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE visits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                place_name TEXT NOT NULL,
+                lat REAL NOT NULL,
+                lon REAL NOT NULL,
+                visited_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE TABLE learned_knowledge (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                prompt_text TEXT NOT NULL,
+                response_text TEXT NOT NULL,
+                normalized_key TEXT NOT NULL,
+                learned_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+    }
+
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        db.execSQL("DROP TABLE IF EXISTS visits")
+        db.execSQL("DROP TABLE IF EXISTS learned_knowledge")
+        onCreate(db)
+    }
+
+    fun insertVisit(placeName: String, lat: Double, lon: Double, timestamp: Long) {
+        val values = ContentValues().apply {
+            put("place_name", placeName)
+            put("lat", lat)
+            put("lon", lon)
+            put("visited_at", timestamp)
+        }
+        writableDatabase.insert("visits", null, values)
+    }
+
+    fun getVisitCountForPlace(placeName: String): Int {
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM visits WHERE place_name = ?",
+            arrayOf(placeName)
+        ).use { cursor ->
+            return if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+    }
+
+    fun getVisitsSummary(): String {
+        val sb = StringBuilder()
+        readableDatabase.rawQuery(
+            """
+            SELECT place_name, COUNT(*) as cnt
+            FROM visits
+            GROUP BY place_name
+            ORDER BY cnt DESC
+            LIMIT 10
+            """.trimIndent(),
+            null
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) {
+                return "अभी तक बाहर की कोई विज़िट सेव नहीं हुई है।"
+            }
+            sb.append("दर्ज विज़िट का हिसाब: ")
+            do {
+                val place = cursor.getString(0)
+                val cnt = cursor.getInt(1)
+                sb.append("$place ($cnt बार), ")
+            } while (cursor.moveToNext())
+        }
+        return sb.toString().removeSuffix(", ")
+    }
+
+    private fun normalize(text: String): String {
+        return text.lowercase(Locale.ROOT)
+            .replace(Regex("[^\\p{L}\\p{N}\\s]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    fun isExactDuplicate(prompt: String, response: String): Boolean {
+        val normPrompt = normalize(prompt)
+        val normResp = normalize(response)
+        readableDatabase.rawQuery(
+            "SELECT prompt_text, response_text FROM learned_knowledge",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val oldP = normalize(cursor.getString(0))
+                val oldR = normalize(cursor.getString(1))
+                if (oldP == normPrompt && oldR == normResp) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    fun insertLearnedItem(prompt: String, response: String, timestamp: Long) {
+        val values = ContentValues().apply {
+            put("prompt_text", prompt)
+            put("response_text", response)
+            put("normalized_key", normalize(prompt))
+            put("learned_at", timestamp)
+        }
+        writableDatabase.insert("learned_knowledge", null, values)
+    }
+
+    fun findBestLocalMatch(query: String): String? {
+        val normQuery = normalize(query)
+        val queryTokens = normQuery.split(" ").filter { it.length >= 2 }.toSet()
+        if (queryTokens.isEmpty()) return null
+
+        var bestScore = 0.0
+        var bestResponse: String? = null
+
+        readableDatabase.rawQuery(
+            "SELECT normalized_key, response_text FROM learned_knowledge ORDER BY id DESC LIMIT 200",
+            null
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val key = cursor.getString(0)
+                val resp = cursor.getString(1)
+
+                if (key == normQuery) {
+                    return resp
+                }
+
+                val keyTokens = key.split(" ").filter { it.length >= 2 }.toSet()
+                if (keyTokens.isEmpty()) continue
+
+                val overlap = queryTokens.intersect(keyTokens).size.toDouble()
+                val denom = max(1, min(queryTokens.size, keyTokens.size)).toDouble()
+                val score = overlap / denom
+
+                // सख़्त मिलान (कम से कम 60% शब्द मेल खाएँ) ताकि गलत चीज़ न उठे
+                if (score >= 0.6 && score > bestScore) {
+                    bestScore = score
+                    bestResponse = resp
+                }
+            }
+        }
+        return bestResponse
     }
 }
