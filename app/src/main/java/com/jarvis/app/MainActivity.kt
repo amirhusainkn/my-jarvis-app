@@ -3,10 +3,8 @@ package com.jarvis.app
 import android.Manifest
 import android.content.ContentValues
 import android.content.Context
-import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.content.pm.ResolveInfo
 import android.content.res.AssetManager
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
@@ -14,11 +12,8 @@ import android.location.Location
 import android.location.LocationManager
 import android.media.AudioAttributes
 import android.media.MediaPlayer
-import android.net.Uri
 import android.os.BatteryManager
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.widget.LinearLayout
@@ -43,7 +38,6 @@ import kotlin.math.max
 class MainActivity : AppCompatActivity(), RecognitionListener {
 
     private lateinit var statusText: TextView
-
     private lateinit var dbHelper: MarcoDatabaseHelper
 
     private var tts: TextToSpeech? = null
@@ -55,16 +49,11 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private var speechService: SpeechService? = null
     private var mediaPlayer: MediaPlayer? = null
     private var isModelReady: Boolean = false
-    private var isModelLoading: Boolean = false
-
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private var pendingLaunchRunnable: Runnable? = null
 
     private var lastCommandKey: String = ""
     private var lastCommandTimeMs: Long = 0L
     private var lastSpokenText: String = ""
     private var lastSpokenTimeMs: Long = 0L
-    private var lastFailureReasonTimeMs: Long = 0L
 
     private var lastCheckTimeMs: Long = 0L
     private var lastCheckedLat: Double? = null
@@ -92,8 +81,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         private const val STARTUP_IGNORE_WINDOW_MS = 2500L
         private const val SAME_COMMAND_COOLDOWN_MS = 2500L
         private const val SAME_TEXT_REPEAT_GUARD_MS = 5000L
-        private const val FAILURE_NOTICE_COOLDOWN_MS = 4500L
-        private const val APP_LAUNCH_DELAY_MS = 1400L
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -107,7 +94,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
 
         statusText = TextView(this).apply {
-            text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (कमांड के लिए 'Marco' बोलें)"
+            text = "मार्को एक्टिव सर। सभी सिस्टम चालू हैं सर।"
             textSize = 15f
         }
 
@@ -115,40 +102,22 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         setContentView(layout)
 
         initOfflineTts()
-        checkAudioAndStartListening()
-    }
 
-    override fun onResume() {
-        super.onResume()
-        if (!isModelReady && !isModelLoading) {
-            checkAudioAndStartListening()
+        val permissionsToRequest = mutableListOf<String>()
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.RECORD_AUDIO)
         }
-    }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
 
-    private fun checkAudioAndStartListening() {
-        val audioGranted = ContextCompat.checkSelfPermission(
-            this,
-            Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-
-        if (audioGranted) {
-            val locPerms = mutableListOf<String>()
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                locPerms.add(Manifest.permission.ACCESS_FINE_LOCATION)
-            }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                locPerms.add(Manifest.permission.ACCESS_COARSE_LOCATION)
-            }
-            if (locPerms.isNotEmpty()) {
-                ActivityCompat.requestPermissions(this, locPerms.toTypedArray(), 2)
-            }
-            initVoskModel()
+        if (permissionsToRequest.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), PERMISSION_REQUEST_CODE)
         } else {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.RECORD_AUDIO),
-                PERMISSION_REQUEST_CODE
-            )
+            initVoskModel()
         }
     }
 
@@ -166,7 +135,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 ttsReady = true
                 if (!startupSpoken) {
                     startupSpoken = true
-                    speak("सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।", speak = true)
+                    speak("मार्को एक्टिव सर। सभी सिस्टम चालू हैं सर।", speak = true)
                 }
             } else {
                 ttsReady = false
@@ -181,20 +150,12 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            val audioGranted = ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED ||
-                (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
-
+            val audioGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
             if (audioGranted) {
-                runOnUiThread {
-                    statusText.text = "माइक की अनुमति मिल गई है, वॉइस मॉडल लोड हो रहा है..."
-                }
                 initVoskModel()
             } else {
                 runOnUiThread {
-                    statusText.text = "माइक की अनुमति नहीं मिली, इसलिए मैं सुन नहीं पा रहा हूँ।"
+                    statusText.text = "मार्को एक्टिव सर। सभी सिस्टम चालू हैं सर। (माइक अनुमति दें)"
                 }
             }
         }
@@ -227,9 +188,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             }
             return
         }
-        if (isModelReady || isModelLoading) return
-        isModelLoading = true
-
         Thread {
             val outDir = File(filesDir, "model-en-us")
             var copiedCount = 0
@@ -242,9 +200,8 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 if (copiedCount == 0) {
                     val rootAssets = assets.list("")?.joinToString(", ") ?: "खाली"
                     val modelAssets = assets.list("model-en-us")?.joinToString(", ") ?: "नहीं मिला"
-                    isModelLoading = false
                     runOnUiThread {
-                        statusText.text = "वॉइस मॉडल फ़ाइलें नहीं मिलीं, इसलिए सुनना शुरू नहीं हो सका।\nAssets root: $rootAssets\nmodel-en-us: $modelAssets"
+                        statusText.text = "एसेट में फ़ाइलें नहीं मिलीं (कॉपी: 0)\nAssets root: $rootAssets\nmodel-en-us: $modelAssets"
                     }
                     return@Thread
                 }
@@ -253,17 +210,15 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 recognizer = Recognizer(model, SAMPLE_RATE)
                 speechService = SpeechService(recognizer, SAMPLE_RATE)
                 isModelReady = true
-                isModelLoading = false
                 runOnUiThread {
-                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। 'Marco' कहकर कमांड दें..."
+                    statusText.text = "मार्को एक्टिव सर। सभी सिस्टम चालू हैं सर। सुन रहा हूँ..."
                 }
                 speechService?.startListening(this)
             } catch (e: Exception) {
-                isModelLoading = false
                 val info = inspectModelDir(outDir)
                 val traceLines = e.stackTraceToString().lines().take(4).joinToString("\n")
                 runOnUiThread {
-                    statusText.text = "मॉडल लोड नहीं हो सका—वजह: ${e.message}\nकॉपी हुई फ़ाइलें: $copiedCount\n\n$info\n\n$traceLines"
+                    statusText.text = "एरर: ${e.message}\nकॉपी हुई फ़ाइलें: $copiedCount\n\n$info\n\n$traceLines"
                 }
             }
         }.start()
@@ -290,6 +245,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                     }
                     count = 1
                 } catch (_: Exception) {
+                    // खाली फ़ोल्डर होने पर open() फेल हो सकता है, इसलिए उसे सुरक्षित रूप से छोड़ दें
                 }
             }
         } catch (_: Exception) {
@@ -297,70 +253,47 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         return count
     }
 
-    private fun stopSpeakingNow() {
-        pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
-        pendingLaunchRunnable = null
-        runOnUiThread {
-            try {
-                tts?.stop()
-            } catch (_: Exception) {
-            }
-            try {
-                if (mediaPlayer?.isPlaying == true) {
-                    mediaPlayer?.pause()
-                }
-            } catch (_: Exception) {
-            }
+    private fun extractHeardText(jsonText: String?): String {
+        if (jsonText.isNullOrBlank()) return ""
+        return try {
+            val obj = JSONObject(jsonText)
+            obj.optString("text", "")
+        } catch (_: Exception) {
+            jsonText
         }
     }
 
-    private fun reportFailureReason(reasonText: String, forceSpeak: Boolean = true) {
+    private fun canRunCommand(key: String): Boolean {
         val now = SystemClock.elapsedRealtime()
-        if (!forceSpeak && (now - lastFailureReasonTimeMs) < FAILURE_NOTICE_COOLDOWN_MS) {
-            runOnUiThread { statusText.text = reasonText }
-            return
+        if (key == lastCommandKey && (now - lastCommandTimeMs) < SAME_COMMAND_COOLDOWN_MS) {
+            return false
         }
-        lastFailureReasonTimeMs = now
-        runOnUiThread {
-            statusText.text = reasonText
-        }
-        if (forceSpeak && shouldSpeakOnce(reasonText)) {
-            speak(reasonText, speak = true)
-        }
+        lastCommandKey = key
+        lastCommandTimeMs = now
+        return true
     }
 
-    private fun getTimeInfoText(): String {
-        val currentTime = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
-        return "अभी समय $currentTime हो रहा है।"
-    }
-
-    private fun getDateInfoText(): String {
-        val formattedDate = SimpleDateFormat("dd MMMM yyyy", Locale("hi", "IN")).format(Date())
-        return "आज की तारीख़ $formattedDate है।"
-    }
-
-    private fun getDayInfoText(): String {
-        val dayName = SimpleDateFormat("EEEE", Locale("hi", "IN")).format(Date())
-        return "आज $dayName है।"
-    }
-
-    private fun getBatteryInfoText(): String {
-        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
-        val status = intent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
-        val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-            status == BatteryManager.BATTERY_STATUS_FULL
-
-        if (level < 0 || scale <= 0) {
-            return "बैटरी की जानकारी नहीं मिल सकी, क्योंकि सिस्टम ने बैटरी लेवल नहीं दिया।"
+    private fun shouldSpeakOnce(replyText: String): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (replyText == lastSpokenText && (now - lastSpokenTimeMs) < SAME_TEXT_REPEAT_GUARD_MS) {
+            return false
         }
-        val pct = (level * 100) / scale
-        return if (isCharging) {
-            "बैटरी $pct प्रतिशत है और फ़ोन चार्ज हो रहा है।"
-        } else {
-            "बैटरी बैकअप $pct प्रतिशत बाकी है।"
-        }
+        lastSpokenText = replyText
+        lastSpokenTimeMs = now
+        return true
+    }
+
+    private fun normalizeText(text: String): String {
+        return text.lowercase(Locale.ROOT)
+            .replace(Regex("[^a-z0-9\\u0900-\\u097F\\s]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun looksEnglish(text: String): Boolean {
+        val asciiLetters = text.count { it in 'a'..'z' || it in 'A'..'Z' }
+        val devanagariLetters = text.count { it in '\u0900'..'\u097F' }
+        return asciiLetters > devanagariLetters
     }
 
     private fun getCurrentLocation(): Location? {
@@ -481,8 +414,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
 
         val movedMeters = distanceMeters(lastCheckedLat!!, lastCheckedLng!!, loc.latitude, loc.longitude)
-        val elapsedMinutes = (now - lastCheckTimeMs) / 60000.0
-
         if (movedMeters >= 500f) {
             lastCheckedLat = loc.latitude
             lastCheckedLng = loc.longitude
@@ -494,9 +425,9 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
 
         return if (isEnglish) {
-            "Sir, you have moved ${movedMeters.toInt()} meters (${"%.1f".format(elapsedMinutes)} min). I will alert you at 500 meters."
+            "Sir, you have moved ${movedMeters.toInt()} meters. I will alert you at 500 meters."
         } else {
-            "सर, अभी ${movedMeters.toInt()} मीटर दूरी तय हुई है (${"%.1f".format(elapsedMinutes)} मिनट)। 500 मीटर पूरे होते ही आवाज़ आएगी।"
+            "सर, अभी ${movedMeters.toInt()} मीटर दूरी तय हुई है। 500 मीटर पूरे होते ही आवाज़ आएगी।"
         }
     }
 
@@ -520,17 +451,10 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
 
         return if (isEnglish) {
-            "Permission received, Sir. Saved in local database. Please check that network is on if online sync is needed."
+            "Permission received, Sir. Saved in local database."
         } else {
-            "अनुमति मिल गई सर, लोकेशन लोकल डेटाबेस में सेव कर ली गई है। आगे नेटवर्क ऑन करके देख लें।"
+            "अनुमति मिल गई सर, लोकेशन लोकल डेटाबेस में सेव कर ली गई है।"
         }
-    }
-
-    private fun normalizeText(text: String): String {
-        return text.lowercase(Locale.ROOT)
-            .replace(Regex("[^a-z0-9\\u0900-\\u097F\\s]"), " ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
     }
 
     private fun findExactLearnedAnswer(queryNormalized: String): String? {
@@ -573,230 +497,25 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         return sixtyPercentMatches.take(3)
     }
 
-    private fun looksEnglish(text: String): Boolean {
-        val asciiLetters = text.count { it in 'a'..'z' || it in 'A'..'Z' }
-        val devanagariLetters = text.count { it in '\u0900'..'\u097F' }
-        return asciiLetters > devanagariLetters
+    private fun getBatteryInfoText(): String {
+        val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+        val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+        if (level < 0 || scale <= 0) {
+            return "बैटरी की जानकारी नहीं मिल सकी।"
+        }
+        val pct = (level * 100) / scale
+        return "बैटरी $pct प्रतिशत है।"
     }
 
-    private fun buildPackageLaunchAction(packageName: String, fallbackUrl: String, label: String): () -> Pair<Boolean, String> {
-        return {
-            try {
-                val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-                if (launchIntent != null) {
-                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    startActivity(launchIntent)
-                    Pair(true, "")
-                } else {
-                    val mainCategoryIntent = Intent(Intent.ACTION_MAIN).apply {
-                        addCategory(Intent.CATEGORY_LAUNCHER)
-                        setPackage(packageName)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    val resolved = packageManager.queryIntentActivities(mainCategoryIntent, 0)
-                    if (resolved.isNotEmpty()) {
-                        val first = resolved[0].activityInfo
-                        mainCategoryIntent.setClassName(first.packageName, first.name)
-                        startActivity(mainCategoryIntent)
-                        Pair(true, "")
-                    } else if (fallbackUrl.isNotBlank()) {
-                        val webIntent = Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUrl)).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        startActivity(webIntent)
-                        Pair(true, "")
-                    } else {
-                        Pair(false, "$label नहीं खुल सका, क्योंकि यह ऐप फ़ोन में नहीं मिला या लॉन्च इंटेंट उपलब्ध नहीं है।")
-                    }
-                }
-            } catch (e: SecurityException) {
-                Pair(false, "$label नहीं खुल सका, क्योंकि Android सुरक्षा या अनुमति ने इसे रोका है। (${e.message ?: "SecurityException"})")
-            } catch (e: Exception) {
-                Pair(false, "$label नहीं खुल सका, वजह यह है: ${e.message ?: "लॉन्च त्रुटि"}।")
-            }
-        }
-    }
-
-    private fun scheduleSpeakThenLaunch(label: String, spokenAnnouncement: String, launchAction: () -> Pair<Boolean, String>) {
-        pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
-        pendingLaunchRunnable = null
-
-        runOnUiThread {
-            statusText.text = spokenAnnouncement
-        }
-        speak(spokenAnnouncement, speak = true)
-
-        val runnable = Runnable {
-            pendingLaunchRunnable = null
-            val (opened, failReason) = launchAction()
-            if (!opened) {
-                val reason = if (failReason.isNotBlank()) {
-                    failReason
-                } else {
-                    "$label नहीं खुल सका, क्योंकि ऐप लॉन्च नहीं हो पाया।"
-                }
-                reportFailureReason(reason, forceSpeak = true)
-            }
-        }
-        pendingLaunchRunnable = runnable
-        mainHandler.postDelayed(runnable, APP_LAUNCH_DELAY_MS)
-    }
-
-    private fun matchAppToLaunch(spoken: String): Triple<String, String, () -> Pair<Boolean, String>>? {
-        if (spoken.contains("play store") || spoken.contains("playstore") || spoken.contains("प्ले स्टोर") || spoken.contains("प्लेस्टोर")) {
-            val label = "Play Store"
-            return Triple(
-                label,
-                "सर, $label खोला जा रहा है।",
-                buildPackageLaunchAction("com.android.vending", "https://play.google.com/store", label)
-            )
-        }
-        if (spoken.contains("whatsapp") || spoken.contains("व्हाट्सएप") || spoken.contains("वॉट्सएप") || spoken.contains("what's up")) {
-            val label = "WhatsApp"
-            return Triple(
-                label,
-                "सर, $label खोला जा रहा है।",
-                buildPackageLaunchAction("com.whatsapp", "https://www.whatsapp.com", label)
-            )
-        }
-        if (spoken.contains("youtube") || spoken.contains("यूट्यूब") || spoken.contains("you tube")) {
-            val label = "YouTube"
-            return Triple(
-                label,
-                "सर, $label खोला जा रहा है।",
-                buildPackageLaunchAction("com.google.android.youtube", "https://www.youtube.com", label)
-            )
-        }
-        if (spoken.contains("instagram") || spoken.contains("इंस्टाग्राम") || spoken.contains("insta")) {
-            val label = "Instagram"
-            return Triple(
-                label,
-                "सर, $label खोला जा रहा है।",
-                buildPackageLaunchAction("com.instagram.android", "https://www.instagram.com", label)
-            )
-        }
-
-        val cleaned = spoken
-            .replace("marco", " ")
-            .replace("मार्को", " ")
-            .replace("open", " ")
-            .replace("launch", " ")
-            .replace("start", " ")
-            .replace("kholo", " ")
-            .replace("khol", " ")
-            .replace("chalu", " ")
-            .replace("karo", " ")
-            .replace("करो", " ")
-            .replace("खोलो", " ")
-            .replace("खोल", " ")
-            .replace("ऐप", " ")
-            .replace("app", " ")
-            .trim()
-
-        val tokens = cleaned
-            .split(Regex("[^a-zA-Z0-9\\u0900-\\u097F]+"))
-            .map { it.trim() }
-            .filter { it.length >= 3 }
-
-        if (tokens.isEmpty()) return null
-
-        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-        }
-
-        val activities: List<ResolveInfo> = try {
-            packageManager.queryIntentActivities(mainIntent, 0)
-        } catch (_: Exception) {
-            emptyList()
-        }
-
-        var bestMatch: Triple<String, String, Intent>? = null
-        var bestScore = 0
-
-        for (info in activities) {
-            val label = info.loadLabel(packageManager)?.toString()?.lowercase(Locale.getDefault())?.trim() ?: continue
-            val pkg = info.activityInfo?.packageName ?: continue
-            if (pkg == packageName) continue
-
-            var score = 0
-            for (token in tokens) {
-                if (label == token) {
-                    score += 100
-                } else if (label.contains(token) && token.length >= 4) {
-                    score += 55
-                } else if (token.contains(label) && label.length >= 4) {
-                    score += 45
-                }
-            }
-
-            if (score > bestScore) {
-                bestScore = score
-                val launchIntent = Intent(Intent.ACTION_MAIN).apply {
-                    addCategory(Intent.CATEGORY_LAUNCHER)
-                    setClassName(pkg, info.activityInfo.name)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                }
-                bestMatch = Triple(info.loadLabel(packageManager).toString(), pkg, launchIntent)
-            }
-        }
-
-        if (bestMatch != null && bestScore >= 55) {
-            val appTitle = bestMatch.first
-            val targetIntent = bestMatch.third
-            return Triple(appTitle, "सर, $appTitle खोला जा रहा है।") {
-                try {
-                    startActivity(targetIntent)
-                    Pair(true, "")
-                } catch (e: Exception) {
-                    Pair(false, "$appTitle नहीं खुल सका, वजह यह है: ${e.message ?: "लॉन्च त्रुटि"}।")
-                }
-            }
-        }
-
-        return null
-    }
-
-    private fun extractHeardText(jsonText: String?): String {
-        if (jsonText.isNullOrBlank()) return ""
-        return try {
-            val obj = JSONObject(jsonText)
-            obj.optString("text", "")
-        } catch (_: Exception) {
-            jsonText
-        }
-    }
-
-    private fun canRunCommand(key: String): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        if (key == lastCommandKey && (now - lastCommandTimeMs) < SAME_COMMAND_COOLDOWN_MS) {
-            return false
-        }
-        lastCommandKey = key
-        lastCommandTimeMs = now
-        return true
-    }
-
-    private fun shouldSpeakOnce(replyText: String): Boolean {
-        val now = SystemClock.elapsedRealtime()
-        if (replyText == lastSpokenText && (now - lastSpokenTimeMs) < SAME_TEXT_REPEAT_GUARD_MS) {
-            return false
-        }
-        lastSpokenText = replyText
-        lastSpokenTimeMs = now
-        return true
-    }
-
-    private fun evaluateUtterance(rawHypothesis: String?): Pair<String, Any>? {
+    override fun onResult(hypothesis: String?) {
         if ((SystemClock.elapsedRealtime() - activityCreatedAtMs) < STARTUP_IGNORE_WINDOW_MS) {
-            return null
+            return
         }
 
-        val rawHeard = extractHeardText(rawHypothesis).trim()
+        val rawHeard = extractHeardText(hypothesis).trim()
         val spoken = rawHeard.lowercase(Locale.getDefault())
-        if (spoken.isEmpty()) return null
-
-        val words = spoken.split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (words.isEmpty()) return null
+        if (spoken.isBlank()) return
 
         val isEnglish = looksEnglish(rawHeard)
         val normalized = normalizeText(rawHeard)
@@ -807,28 +526,28 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 normalized.contains("anumati") || normalized.contains("अनुमति") || normalized.contains("allow")
             val isNo = normalized.contains("nahi") || normalized.contains("nahin") || normalized.contains("नहीं") ||
                 normalized.contains("no") || normalized.contains("mat") || normalized.contains("मत")
-            if (isYes) {
-                return Pair("five_hundred_perm_yes", handle500mPermissionResponse(isApproved = true, isEnglish = isEnglish))
-            }
-            if (isNo) {
-                return Pair("five_hundred_perm_no", handle500mPermissionResponse(isApproved = false, isEnglish = isEnglish))
-            }
-        }
 
-        val hasWakeWord = spoken.contains("marco") || spoken.contains("मार्को")
-        if (!hasWakeWord) {
-            return null
-        }
-
-        if (spoken.contains("stop") || spoken.contains("ruko") || spoken.contains("रुको") || spoken.contains("बंद")) {
-            stopSpeakingNow()
-            return Pair("stop", "ठीक है, मैं चुप हो गया। सुन रहा हूँ...")
+            if (isYes && canRunCommand("perm_yes")) {
+                val reply = handle500mPermissionResponse(isApproved = true, isEnglish = isEnglish)
+                runOnUiThread { statusText.text = reply }
+                if (shouldSpeakOnce(reply)) speak(reply, speak = true)
+                return
+            }
+            if (isNo && canRunCommand("perm_no")) {
+                val reply = handle500mPermissionResponse(isApproved = false, isEnglish = isEnglish)
+                runOnUiThread { statusText.text = reply }
+                if (shouldSpeakOnce(reply)) speak(reply, speak = true)
+                return
+            }
         }
 
         val isSaveHome = (normalized.contains("ghar") && (normalized.contains("save") || normalized.contains("mark") || normalized.contains("set") || normalized.contains("सेव") || normalized.contains("मार्क") || normalized.contains("करो"))) ||
             (normalized.contains("save") && (normalized.contains("home") || normalized.contains("place")))
-        if (isSaveHome) {
-            return Pair("save_home", markCurrentLocationAsHome(isEnglish))
+        if (isSaveHome && canRunCommand("save_home")) {
+            val reply = markCurrentLocationAsHome(isEnglish)
+            runOnUiThread { statusText.text = reply }
+            if (shouldSpeakOnce(reply)) speak(reply, speak = true)
+            return
         }
 
         val isVisitsQuery = normalized.contains("kitni bar") || normalized.contains("kitni baar") ||
@@ -836,116 +555,63 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             normalized.contains("bahar gaya") || normalized.contains("bahar gaye") ||
             normalized.contains("visit") || normalized.contains("visits") ||
             normalized.contains("कब कब") || normalized.contains("कितनी बार") || normalized.contains("विज़िट")
-        if (isVisitsQuery) {
-            return Pair("visits_summary", getVisitsSummaryReply(isEnglish))
+        if (isVisitsQuery && canRunCommand("visits")) {
+            val reply = getVisitsSummaryReply(isEnglish)
+            runOnUiThread { statusText.text = reply }
+            if (shouldSpeakOnce(reply)) speak(reply, speak = true)
+            return
         }
 
-        if (normalized.contains("500") || normalized.contains("meter") || normalized.contains("मीटर") || normalized.contains("location") || normalized.contains("लोकेशन")) {
-            return Pair("five_hundred_check", evaluate500MeterLocalRule(isEnglish))
+        if ((normalized.contains("500") || normalized.contains("meter") || normalized.contains("मीटर") || normalized.contains("location") || normalized.contains("लोकेशन")) && canRunCommand("500m")) {
+            val reply = evaluate500MeterLocalRule(isEnglish)
+            runOnUiThread { statusText.text = reply }
+            if (shouldSpeakOnce(reply)) speak(reply, speak = true)
+            return
         }
 
-        val hasTimeWord = spoken.contains("time") || spoken.contains("टाइम") || spoken.contains("समय") ||
-            spoken.contains("samay") || spoken.contains("waqt") || spoken.contains("वक्त")
-        val hasDateWord = spoken.contains("date") || spoken.contains("tarik") || spoken.contains("tariq") ||
-            spoken.contains("tareekh") || spoken.contains("तारीख") || spoken.contains("तारीख़")
-        val hasDayWord = spoken.contains("day") || spoken.contains("din") || spoken.contains("दिन") ||
-            spoken.contains("war") || spoken.contains("vaar") || spoken.contains("वार")
-        val hasBatteryWord = spoken.contains("battery") || spoken.contains("बैटरी") ||
-            spoken.contains("charge") || spoken.contains("charging") || spoken.contains("चार्ज")
-
-        val hasOpenIntent = spoken.contains("open") || spoken.contains("launch") || spoken.contains("start") ||
-            spoken.contains("kholo") || spoken.contains("khol") || spoken.contains("खोलो") ||
-            spoken.contains("खोल") || spoken.contains("chalu") || spoken.contains("चालू")
-
-        if (hasOpenIntent) {
-            val appTriple = matchAppToLaunch(spoken)
-            if (appTriple != null) {
-                return Pair("app_open", appTriple)
+        if (spoken.contains("time") || spoken.contains("टाइम") || spoken.contains("समय")) {
+            if (!canRunCommand("time")) return
+            val currentTime = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+            val reply = "अभी समय $currentTime हो रहा है।"
+            runOnUiThread {
+                statusText.text = reply
             }
-            return Pair(
-                "unmatched_open",
-                "मैंने \"$rawHeard\" सुना, लेकिन यह ऐप फ़ोन में नहीं मिला या नाम मैच नहीं हुआ।"
-            )
+            if (shouldSpeakOnce(reply)) {
+                speak(reply, speak = true)
+            }
+            return
         }
 
-        when {
-            hasBatteryWord -> return Pair("battery", getBatteryInfoText())
-            hasDateWord -> return Pair("date", getDateInfoText())
-            hasDayWord -> return Pair("day", getDayInfoText())
-            hasTimeWord -> return Pair("time", getTimeInfoText())
+        if ((spoken.contains("battery") || spoken.contains("बैटरी")) && canRunCommand("battery")) {
+            val reply = getBatteryInfoText()
+            runOnUiThread { statusText.text = reply }
+            if (shouldSpeakOnce(reply)) speak(reply, speak = true)
+            return
         }
 
         val exactAnswer = findExactLearnedAnswer(normalized)
-        if (exactAnswer != null) {
-            return Pair("learned_exact", exactAnswer)
+        if (exactAnswer != null && canRunCommand("learned_exact")) {
+            runOnUiThread { statusText.text = exactAnswer }
+            if (shouldSpeakOnce(exactAnswer)) speak(exactAnswer, speak = true)
+            return
         }
 
         val similarAnswers = findSimilarLearnedAnswers(normalized)
-        if (similarAnswers.isNotEmpty()) {
+        if (similarAnswers.isNotEmpty() && canRunCommand("learned_similar")) {
             val intro = if (isEnglish) noExactMatchEnglish else noExactMatchHindi
-            return Pair("learned_similar", "$intro\n\n• " + similarAnswers.joinToString("\n• "))
-        }
-
-        val fallbackIntro = if (isEnglish) noExactMatchEnglish else noExactMatchHindi
-        return Pair("no_match", fallbackIntro)
-    }
-
-    private fun handleCompleteSpeech(rawHypothesis: String?) {
-        val matched = evaluateUtterance(rawHypothesis) ?: return
-        if (!canRunCommand(matched.first)) return
-
-        when (matched.first) {
-            "stop" -> {
-                val msg = matched.second as String
-                runOnUiThread { statusText.text = msg }
-            }
-            "app_open" -> {
-                @Suppress("UNCHECKED_CAST")
-                val appTriple = matched.second as Triple<String, String, () -> Pair<Boolean, String>>
-                val announcement = appTriple.second
-                if (shouldSpeakOnce(announcement)) {
-                    scheduleSpeakThenLaunch(appTriple.first, announcement, appTriple.third)
-                }
-            }
-            "unmatched_open" -> {
-                val reason = matched.second as String
-                reportFailureReason(reason, forceSpeak = false)
-            }
-            "learned_similar", "no_match" -> {
-                val fullText = matched.second as String
-                val spokenPart = fullText.substringBefore("\n\n").trim()
-                runOnUiThread {
-                    statusText.text = fullText
-                }
-                if (shouldSpeakOnce(spokenPart)) {
-                    speak(spokenPart, speak = true)
-                }
-            }
-            else -> {
-                val reply = matched.second as String
-                runOnUiThread {
-                    statusText.text = reply
-                }
-                if (shouldSpeakOnce(reply)) {
-                    speak(reply, speak = true)
-                }
-            }
+            val fullText = "$intro\n\n• " + similarAnswers.joinToString("\n• ")
+            runOnUiThread { statusText.text = fullText }
+            if (shouldSpeakOnce(intro)) speak(intro, speak = true)
         }
     }
 
+    override fun onFinalResult(hypothesis: String?) {}
     override fun onPartialResult(hypothesis: String?) {}
 
-    override fun onResult(hypothesis: String?) {
-        handleCompleteSpeech(hypothesis)
-    }
-
-    override fun onFinalResult(hypothesis: String?) {
-        // दोहराव रोकने के लिए केवल onResult से कमांड चलाते हैं
-    }
-
     override fun onError(exception: Exception?) {
-        val msg = "सुनने का काम रुक गया—वजह: ${exception?.message ?: "माइक या रिकॉग्नाइज़र त्रुटि"}"
-        reportFailureReason(msg, forceSpeak = true)
+        runOnUiThread {
+            statusText.text = "सुनने में दिक्कत: ${exception?.message}"
+        }
     }
 
     override fun onTimeout() {
@@ -1036,7 +702,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     }
 
     override fun onDestroy() {
-        pendingLaunchRunnable?.let { mainHandler.removeCallbacks(it) }
         speechService?.stop()
         speechService?.shutdown()
         recognizer?.close()
