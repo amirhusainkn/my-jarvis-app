@@ -55,6 +55,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     private var speechService: SpeechService? = null
     private var mediaPlayer: MediaPlayer? = null
     private var isModelReady: Boolean = false
+    private var isModelLoading: Boolean = false
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingLaunchRunnable: Runnable? = null
@@ -106,7 +107,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
 
         statusText = TextView(this).apply {
-            text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (कमांड के लिए 'Marco' या 'Jarvis' बोलें)"
+            text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (कमांड के लिए 'Marco' बोलें)"
             textSize = 15f
         }
 
@@ -114,22 +115,40 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         setContentView(layout)
 
         initOfflineTts()
+        checkAudioAndStartListening()
+    }
 
-        val permissionsToRequest = mutableListOf<String>()
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.RECORD_AUDIO)
+    override fun onResume() {
+        super.onResume()
+        if (!isModelReady && !isModelLoading) {
+            checkAudioAndStartListening()
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.ACCESS_COARSE_LOCATION)
-        }
+    }
 
-        if (permissionsToRequest.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, permissionsToRequest.toTypedArray(), PERMISSION_REQUEST_CODE)
-        } else {
+    private fun checkAudioAndStartListening() {
+        val audioGranted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (audioGranted) {
+            val locPerms = mutableListOf<String>()
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                locPerms.add(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                locPerms.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+            }
+            if (locPerms.isNotEmpty()) {
+                ActivityCompat.requestPermissions(this, locPerms.toTypedArray(), 2)
+            }
             initVoskModel()
+        } else {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                PERMISSION_REQUEST_CODE
+            )
         }
     }
 
@@ -162,8 +181,16 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            val audioGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            val audioGranted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED ||
+                (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
+
             if (audioGranted) {
+                runOnUiThread {
+                    statusText.text = "माइक की अनुमति मिल गई है, वॉइस मॉडल लोड हो रहा है..."
+                }
                 initVoskModel()
             } else {
                 runOnUiThread {
@@ -194,6 +221,15 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     }
 
     private fun initVoskModel() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            runOnUiThread {
+                statusText.text = "माइक की अनुमति नहीं मिली, इसलिए मैं सुन नहीं पा रहा हूँ।"
+            }
+            return
+        }
+        if (isModelReady || isModelLoading) return
+        isModelLoading = true
+
         Thread {
             val outDir = File(filesDir, "model-en-us")
             var copiedCount = 0
@@ -206,6 +242,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 if (copiedCount == 0) {
                     val rootAssets = assets.list("")?.joinToString(", ") ?: "खाली"
                     val modelAssets = assets.list("model-en-us")?.joinToString(", ") ?: "नहीं मिला"
+                    isModelLoading = false
                     runOnUiThread {
                         statusText.text = "वॉइस मॉडल फ़ाइलें नहीं मिलीं, इसलिए सुनना शुरू नहीं हो सका।\nAssets root: $rootAssets\nmodel-en-us: $modelAssets"
                     }
@@ -216,11 +253,13 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 recognizer = Recognizer(model, SAMPLE_RATE)
                 speechService = SpeechService(recognizer, SAMPLE_RATE)
                 isModelReady = true
+                isModelLoading = false
                 runOnUiThread {
-                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। 'Marco' या 'Jarvis' कहकर कमांड दें..."
+                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। 'Marco' कहकर कमांड दें..."
                 }
                 speechService?.startListening(this)
             } catch (e: Exception) {
+                isModelLoading = false
                 val info = inspectModelDir(outDir)
                 val traceLines = e.stackTraceToString().lines().take(4).joinToString("\n")
                 runOnUiThread {
@@ -339,17 +378,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         val results = FloatArray(1)
         Location.distanceBetween(lat1, lng1, lat2, lng2, results)
         return results[0]
-    }
-
-    private fun getHomeLocation(): Pair<Double, Double>? {
-        val db = dbHelper.readableDatabase
-        val cursor = db.rawQuery("SELECT lat, lng FROM home_location LIMIT 1", null)
-        cursor.use {
-            if (it.moveToFirst()) {
-                return Pair(it.getDouble(0), it.getDouble(1))
-            }
-        }
-        return null
     }
 
     private fun saveVisitToLocal(placeName: String, lat: Double, lng: Double, summary: String) {
@@ -521,7 +549,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
 
     private fun findSimilarLearnedAnswers(queryNormalized: String): List<String> {
         val queryWords = queryNormalized.split(" ")
-            .filter { it.isNotBlank() && it != "marco" && it != "jarvis" && it != "मार्को" && it != "जार्विस" }
+            .filter { it.isNotBlank() && it != "marco" && it != "मार्को" }
             .toSet()
         if (queryWords.isEmpty()) return emptyList()
 
@@ -651,8 +679,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         val cleaned = spoken
             .replace("marco", " ")
             .replace("मार्को", " ")
-            .replace("jarvis", " ")
-            .replace("जार्विस", " ")
             .replace("open", " ")
             .replace("launch", " ")
             .replace("start", " ")
@@ -775,7 +801,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         val isEnglish = looksEnglish(rawHeard)
         val normalized = normalizeText(rawHeard)
 
-        // 500 मीटर के बाद अनुमति पूछी गई हो तो हाँ/नहीं स्वीकार करें
         if (awaiting500mNetworkPermission) {
             val isYes = normalized.contains("haan") || normalized.contains("han") || normalized.contains("हाँ") ||
                 normalized.contains("yes") || normalized.contains("ok") || normalized.contains("okay") ||
@@ -790,9 +815,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             }
         }
 
-        // पंखे/मोटर/बैकग्राउंड शोर से होने वाली ग़लत पकड़ घटाने के लिए 'Marco' या 'Jarvis' ज़रूरी है
-        val hasWakeWord = spoken.contains("marco") || spoken.contains("मार्को") ||
-            spoken.contains("jarvis") || spoken.contains("जार्विस")
+        val hasWakeWord = spoken.contains("marco") || spoken.contains("मार्को")
         if (!hasWakeWord) {
             return null
         }
@@ -802,14 +825,12 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             return Pair("stop", "ठीक है, मैं चुप हो गया। सुन रहा हूँ...")
         }
 
-        // 1. पक्के हुक्म: घर सेट करना
         val isSaveHome = (normalized.contains("ghar") && (normalized.contains("save") || normalized.contains("mark") || normalized.contains("set") || normalized.contains("सेव") || normalized.contains("मार्क") || normalized.contains("करो"))) ||
             (normalized.contains("save") && (normalized.contains("home") || normalized.contains("place")))
         if (isSaveHome) {
             return Pair("save_home", markCurrentLocationAsHome(isEnglish))
         }
 
-        // 1. पक्के हुक्म: विज़िट / जाने का हिसाब
         val isVisitsQuery = normalized.contains("kitni bar") || normalized.contains("kitni baar") ||
             normalized.contains("kab kab") || normalized.contains("kab-kab") ||
             normalized.contains("bahar gaya") || normalized.contains("bahar gaye") ||
@@ -819,7 +840,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             return Pair("visits_summary", getVisitsSummaryReply(isEnglish))
         }
 
-        // 1. पक्के हुक्म: 500 मीटर दूरी व लोकल सेव
         if (normalized.contains("500") || normalized.contains("meter") || normalized.contains("मीटर") || normalized.contains("location") || normalized.contains("लोकेशन")) {
             return Pair("five_hundred_check", evaluate500MeterLocalRule(isEnglish))
         }
@@ -855,7 +875,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
             hasTimeWord -> return Pair("time", getTimeInfoText())
         }
 
-        // 2. सीखी हुई बातें और सवाल (SQLite learned_knowledge - ऑफ़लाइन मिलान)
         val exactAnswer = findExactLearnedAnswer(normalized)
         if (exactAnswer != null) {
             return Pair("learned_exact", exactAnswer)
