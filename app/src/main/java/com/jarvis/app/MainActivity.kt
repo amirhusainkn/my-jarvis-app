@@ -94,7 +94,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
         }
 
         statusText = TextView(this).apply {
-            text = "मार्को एक्टिव सर। सभी सिस्टम चालू हैं सर।"
+            text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।"
             textSize = 15f
         }
 
@@ -135,7 +135,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 ttsReady = true
                 if (!startupSpoken) {
                     startupSpoken = true
-                    speak("मार्को एक्टिव सर। सभी सिस्टम चालू हैं सर।", speak = true)
+                    speak("सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव।", speak = true)
                 }
             } else {
                 ttsReady = false
@@ -150,12 +150,15 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == PERMISSION_REQUEST_CODE) {
-            val audioGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            val audioGranted = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.RECORD_AUDIO
+            ) == PackageManager.PERMISSION_GRANTED
             if (audioGranted) {
                 initVoskModel()
             } else {
                 runOnUiThread {
-                    statusText.text = "मार्को एक्टिव सर। सभी सिस्टम चालू हैं सर। (माइक अनुमति दें)"
+                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। (माइक अनुमति दें)"
                 }
             }
         }
@@ -182,12 +185,6 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
     }
 
     private fun initVoskModel() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            runOnUiThread {
-                statusText.text = "माइक की अनुमति नहीं मिली, इसलिए मैं सुन नहीं पा रहा हूँ।"
-            }
-            return
-        }
         Thread {
             val outDir = File(filesDir, "model-en-us")
             var copiedCount = 0
@@ -211,7 +208,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                 speechService = SpeechService(recognizer, SAMPLE_RATE)
                 isModelReady = true
                 runOnUiThread {
-                    statusText.text = "मार्को एक्टिव सर। सभी सिस्टम चालू हैं सर। सुन रहा हूँ..."
+                    statusText.text = "सभी सिस्टम ऑनलाइन हैं सर, आई एम एक्टिव। सुन रहा हूँ..."
                 }
                 speechService?.startListening(this)
             } catch (e: Exception) {
@@ -245,7 +242,7 @@ class MainActivity : AppCompatActivity(), RecognitionListener {
                     }
                     count = 1
                 } catch (_: Exception) {
-                    // खाली फ़ोल्डर होने पर open() फेल हो सकता है, इसलिए उसे सुरक्षित रूप से छोड़ दें
+                    // खाली फ़ोल्डर या न खुलने वाले आइटम को सुरक्षित रूप से छोड़ दें
                 }
             }
         } catch (_: Exception) {
